@@ -16,7 +16,7 @@ and payment flow end-to-end.
 
 ```
 /backend   NestJS (TypeScript) API — multi-agent orchestration
-/frontend  React 18 (TypeScript + Vite) — chat UI + self-care dashboards
+/frontend  React 19 (TypeScript + Vite) — chat UI + self-care dashboards
 ```
 
 ### Backend (NestJS)
