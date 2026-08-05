@@ -3,7 +3,7 @@ services:
     build: ./backend
     ports: ["3001:3001"]
     environment:
-      - JWT_SECRET=telecom-secret-key
+      - JWT_SECRET=${JWT_SECRET:-please-set-a-secure-jwt-secret}
       - LLM_PROVIDER=mock
       - NODE_ENV=production
     networks: [telecom-net]
