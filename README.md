@@ -195,12 +195,12 @@ npm run build
 
 ### Backend (`backend/.env`)
 
-| Variable       | Default                | Description                                   |
-| -------------- | ----------------------- | ---------------------------------------------- |
-| `PORT`         | `3001`                  | HTTP port the NestJS server listens on         |
-| `JWT_SECRET`   | `telecom-secret-key`    | Secret used to sign/verify JWTs                |
-| `LLM_PROVIDER` | `mock`                  | `mock` or `openai` (provider selection)        |
-| `NODE_ENV`     | `development`           | Standard Node environment flag                 |
+| Variable       | Default                             | Description                                   |
+| -------------- | ----------------------------------- | ---------------------------------------------- |
+| `PORT`         | `3001`                              | HTTP port the NestJS server listens on         |
+| `JWT_SECRET`   | `please-set-a-secure-jwt-secret`    | Secret used to sign/verify JWTs                |
+| `LLM_PROVIDER` | `mock`                              | `mock` or `openai` (provider selection)        |
+| `NODE_ENV`     | `development`                       | Standard Node environment flag                 |
 
 ### Frontend (`frontend/.env`)
 
