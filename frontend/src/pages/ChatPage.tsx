@@ -172,13 +172,11 @@ export function ChatPage() {
                     amount={
                       (message.response.context?.plan as { price?: number } | undefined)?.price
                     }
-                    onComplete={() =>
-                      handlePaymentComplete(
-                        message.id,
-                        message.response!,
-                        (message.response!.context?.plan as { id: string })?.id,
-                      )
-                    }
+                    onComplete={() => {
+                      const plan = message.response?.context?.plan as { id: string } | undefined;
+                      if (!plan?.id) return;
+                      handlePaymentComplete(message.id, message.response!, plan.id);
+                    }}
                     disabled={message.actioned || loading}
                   />
                 )}
