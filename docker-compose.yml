@@ -1,0 +1,16 @@
+services:
+  backend:
+    build: ./backend
+    ports: ["3001:3001"]
+    environment:
+      - JWT_SECRET=${JWT_SECRET:-please-set-a-secure-jwt-secret}
+      - LLM_PROVIDER=mock
+      - NODE_ENV=production
+    networks: [telecom-net]
+  frontend:
+    build: ./frontend
+    ports: ["3000:80"]
+    depends_on: [backend]
+    networks: [telecom-net]
+networks:
+  telecom-net:

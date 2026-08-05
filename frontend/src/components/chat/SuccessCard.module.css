@@ -1,0 +1,21 @@
+.card {
+  background: #f0fdf4;
+  border: 1px solid #bbf7d0;
+  border-radius: 12px;
+  padding: 1.25rem 1.5rem;
+  max-width: 480px;
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.icon {
+  color: #16a34a;
+  flex-shrink: 0;
+}
+
+.message {
+  color: #14532d;
+  font-size: 0.92rem;
+  line-height: 1.4;
+}
