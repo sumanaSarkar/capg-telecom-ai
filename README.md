@@ -69,7 +69,7 @@ sequenceDiagram
     participant B as Billing Agent
 
     U->>FE: "Suggest the best data plan and recharge it"
-    FE->>O: POST /orchestrator/ask (action=ask)
+    FE->>O: POST /api/orchestrator/ask (action=ask)
     O->>LLM: detectIntent(message)
     LLM-->>O: { intent, agents, confidence }
 
