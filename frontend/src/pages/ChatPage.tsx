@@ -1,6 +1,8 @@
 import { Send } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import type { FormEvent } from 'react';
+import axios from 'axios';
+import { BillingHistoryCard } from '../components/chat/BillingHistoryCard';
 import { PaymentCard } from '../components/chat/PaymentCard';
 import { PlanRecommendationCard } from '../components/chat/PlanRecommendationCard';
 import { SuccessCard } from '../components/chat/SuccessCard';
@@ -21,7 +23,7 @@ interface ChatMessage {
 
 const WELCOME_MESSAGE =
   "Hello! I'm your AI telecom assistant. How can I help you today? " +
-  "Try: 'Suggest the best data plan and recharge it'";
+  "Try: 'Show my past bills' or 'Suggest the best data plan and recharge it'";
 
 export function ChatPage() {
   const { user } = useAuth();
@@ -60,8 +62,12 @@ export function ChatPage() {
     try {
       const response = await api.ask(message, customerId, 'ask');
       appendAssistantResponse(response);
-    } catch {
-      setError('Something went wrong while contacting the assistant. Please try again.');
+    } catch (err) {
+      if (axios.isAxiosError(err) && err.response?.status === 401) {
+        setError('Your session has expired. Please sign in again.');
+      } else {
+        setError('Something went wrong while contacting the assistant. Please try again.');
+      }
     } finally {
       setLoading(false);
     }
@@ -183,6 +189,10 @@ export function ChatPage() {
 
                 {message.response.stage === 'complete' && (
                   <SuccessCard message={message.response.finalMessage} />
+                )}
+
+                {message.response.stage === 'billing' && (
+                  <BillingHistoryCard records={message.response.billingHistory ?? []} />
                 )}
               </div>
             )}

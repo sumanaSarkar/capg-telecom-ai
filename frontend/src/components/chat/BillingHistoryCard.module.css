@@ -1,0 +1,74 @@
+.card {
+  background: #fff;
+  border-radius: 12px;
+  border: 1px solid #e5e7eb;
+  overflow: hidden;
+  margin-top: 0.5rem;
+}
+
+.table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.875rem;
+}
+
+.table th {
+  background: #f9fafb;
+  padding: 0.625rem 1rem;
+  text-align: left;
+  font-weight: 600;
+  color: #374151;
+  border-bottom: 1px solid #e5e7eb;
+}
+
+.table td {
+  padding: 0.625rem 1rem;
+  color: #4b5563;
+  border-bottom: 1px solid #f3f4f6;
+}
+
+.table tfoot td {
+  background: #f9fafb;
+  border-top: 2px solid #e5e7eb;
+  border-bottom: none;
+}
+
+.badge {
+  display: inline-block;
+  padding: 0.15rem 0.6rem;
+  border-radius: 9999px;
+  font-size: 0.75rem;
+  font-weight: 500;
+  text-transform: capitalize;
+}
+
+.paid {
+  background: #d1fae5;
+  color: #065f46;
+}
+
+.pending {
+  background: #fef3c7;
+  color: #92400e;
+}
+
+.failed {
+  background: #fee2e2;
+  color: #991b1b;
+}
+
+.totalLabel {
+  font-weight: 600;
+  color: #111827;
+}
+
+.totalAmount {
+  font-weight: 700;
+  color: #111827;
+}
+
+.empty {
+  padding: 1.25rem;
+  color: #6b7280;
+  text-align: center;
+}

@@ -1,5 +1,6 @@
 import { Inject, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { AnalyticsService } from '../agents/analytics/analytics.service';
+import { BillingRecord } from '../agents/billing/billing.model';
 import { BillingService } from '../agents/billing/billing.service';
 import { PaymentService } from '../agents/payment/payment.service';
 import { PlanService } from '../agents/plan/plan.service';
@@ -10,7 +11,7 @@ import { LLM_PROVIDER } from '../llm/llm-provider.interface';
 import { AskAction, AskDto } from './ask.dto';
 import { RecommendationService } from './recommendation.service';
 
-export type OrchestratorStage = 'recommendation' | 'payment' | 'complete';
+export type OrchestratorStage = 'recommendation' | 'payment' | 'complete' | 'billing';
 
 export interface OrchestratorResponse {
   intent: string;
@@ -23,6 +24,7 @@ export interface OrchestratorResponse {
   paymentId?: string;
   finalMessage: string;
   stage: OrchestratorStage;
+  billingHistory?: BillingRecord[];
   context?: Record<string, unknown>;
 }
 
@@ -58,11 +60,41 @@ export class OrchestratorService {
     return this.handleAsk(dto, intent, agents);
   }
 
+  private filterRecentBilling(records: BillingRecord[], months: number): BillingRecord[] {
+    const cutoff = new Date();
+    cutoff.setMonth(cutoff.getMonth() - months);
+    return records.filter((r) => new Date(r.date) >= cutoff);
+  }
+
   private async handleAsk(
     dto: AskDto,
     intent: string,
     agents: string[],
   ): Promise<OrchestratorResponse> {
+    // Billing-only query: return history without running the recommendation engine.
+    const isBillingOnly =
+      agents.includes('billing') &&
+      !agents.includes('plan') &&
+      !agents.includes('recharge');
+
+    if (isBillingOnly) {
+      const monthsMatch = dto.message.match(/\b(\d+)\s*month/i);
+      const months = monthsMatch ? parseInt(monthsMatch[1], 10) : undefined;
+      const allRecords = this.billingService.getBillingHistory(dto.customerId);
+      const billingHistory = months
+        ? this.filterRecentBilling(allRecords, months)
+        : allRecords;
+
+      const finalMessage = await this.llmProvider.generateResponse(
+        { count: billingHistory.length, months: months ?? 'all' },
+        months
+          ? `Here are your past {{months}} month(s) of billing records ({{count}} found):`
+          : `Here are your billing records ({{count}} found):`,
+      );
+
+      return { intent, agents, finalMessage, stage: 'billing', billingHistory };
+    }
+
     // Step 2/3: parallel fan-out to the core context-gathering agents.
     const [profile, analytics, plans] = await Promise.all([
       Promise.resolve(this.profileService.getProfile(dto.customerId)),

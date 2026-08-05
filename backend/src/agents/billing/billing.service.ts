@@ -6,7 +6,7 @@ const BILLING_HISTORY: BillingRecord[] = [
   {
     id: 'bill-001',
     customerId: 'cust-001',
-    date: '2024-04-01',
+    date: '2026-05-01',
     description: 'Basic 5GB - Monthly subscription',
     amount: 29.99,
     status: 'paid',
@@ -14,7 +14,7 @@ const BILLING_HISTORY: BillingRecord[] = [
   {
     id: 'bill-002',
     customerId: 'cust-001',
-    date: '2024-05-01',
+    date: '2026-06-01',
     description: 'Basic 5GB - Monthly subscription',
     amount: 29.99,
     status: 'paid',
@@ -22,7 +22,15 @@ const BILLING_HISTORY: BillingRecord[] = [
   {
     id: 'bill-003',
     customerId: 'cust-001',
-    date: '2024-06-01',
+    date: '2026-07-01',
+    description: 'Basic 5GB - Monthly subscription',
+    amount: 29.99,
+    status: 'paid',
+  },
+  {
+    id: 'bill-004',
+    customerId: 'cust-001',
+    date: '2026-08-01',
     description: 'Basic 5GB - Monthly subscription',
     amount: 29.99,
     status: 'pending',

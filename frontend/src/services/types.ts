@@ -77,7 +77,7 @@ export interface SupportTicket {
 }
 
 export type AskAction = 'ask' | 'confirm' | 'payment_success';
-export type OrchestratorStage = 'recommendation' | 'payment' | 'complete';
+export type OrchestratorStage = 'recommendation' | 'payment' | 'complete' | 'billing';
 
 export interface OrchestratorResponse {
   intent: string;
@@ -90,6 +90,7 @@ export interface OrchestratorResponse {
   paymentId?: string;
   finalMessage: string;
   stage: OrchestratorStage;
+  billingHistory?: BillingRecord[];
   context?: Record<string, unknown>;
 }
 
