@@ -1,0 +1,93 @@
+.card {
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  padding: 1.25rem 1.5rem;
+  max-width: 480px;
+  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.06);
+}
+
+.header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 0.75rem;
+}
+
+.planName {
+  font-size: 1.05rem;
+  font-weight: 700;
+  color: #0f172a;
+}
+
+.price {
+  font-size: 1.2rem;
+  font-weight: 700;
+  color: #0ea5e9;
+}
+
+.reason {
+  font-size: 0.9rem;
+  color: #475569;
+  margin-bottom: 0.9rem;
+  line-height: 1.4;
+}
+
+.features {
+  list-style: none;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  padding: 0;
+  margin: 0 0 1rem 0;
+}
+
+.feature {
+  background: #f0f9ff;
+  color: #0369a1;
+  font-size: 0.78rem;
+  padding: 0.25rem 0.6rem;
+  border-radius: 999px;
+  font-weight: 500;
+}
+
+.actions {
+  display: flex;
+  gap: 0.75rem;
+}
+
+.confirmButton {
+  background: #0ea5e9;
+  color: #fff;
+  border: none;
+  padding: 0.55rem 1.2rem;
+  border-radius: 8px;
+  font-weight: 600;
+  cursor: pointer;
+  font-size: 0.9rem;
+}
+
+.confirmButton:hover {
+  background: #0284c7;
+}
+
+.declineButton {
+  background: transparent;
+  color: #64748b;
+  border: 1px solid #cbd5e1;
+  padding: 0.55rem 1.2rem;
+  border-radius: 8px;
+  font-weight: 600;
+  cursor: pointer;
+  font-size: 0.9rem;
+}
+
+.declineButton:hover {
+  background: #f1f5f9;
+}
+
+.confirmButton:disabled,
+.declineButton:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}

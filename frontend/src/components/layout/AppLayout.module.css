@@ -1,0 +1,91 @@
+.layout {
+  display: flex;
+  min-height: 100vh;
+  background: #f8fafc;
+}
+
+.sidebar {
+  width: 240px;
+  background: #0f172a;
+  color: #e2e8f0;
+  display: flex;
+  flex-direction: column;
+  flex-shrink: 0;
+}
+
+.brand {
+  padding: 1.5rem 1.25rem;
+  font-size: 1.15rem;
+  font-weight: 700;
+  color: #ffffff;
+  border-bottom: 1px solid #1e293b;
+  letter-spacing: 0.02em;
+}
+
+.brandAccent {
+  color: #0ea5e9;
+}
+
+.nav {
+  flex: 1;
+  padding: 1rem 0.75rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.navLink {
+  display: flex;
+  align-items: center;
+  gap: 0.7rem;
+  padding: 0.65rem 0.9rem;
+  border-radius: 8px;
+  color: #cbd5e1;
+  text-decoration: none;
+  font-size: 0.92rem;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+
+.navLink:hover {
+  background: #1e293b;
+  color: #fff;
+}
+
+.navLinkActive {
+  background: #0ea5e9;
+  color: #ffffff;
+}
+
+.footer {
+  padding: 1rem 1.25rem;
+  border-top: 1px solid #1e293b;
+  font-size: 0.85rem;
+}
+
+.username {
+  font-weight: 600;
+  color: #fff;
+  margin-bottom: 0.5rem;
+}
+
+.logoutButton {
+  background: transparent;
+  border: 1px solid #334155;
+  color: #cbd5e1;
+  padding: 0.4rem 0.75rem;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 0.85rem;
+  width: 100%;
+}
+
+.logoutButton:hover {
+  background: #1e293b;
+  color: #fff;
+}
+
+.content {
+  flex: 1;
+  padding: 2rem 2.5rem;
+  overflow-y: auto;
+}

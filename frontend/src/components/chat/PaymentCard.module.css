@@ -1,0 +1,53 @@
+.card {
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  padding: 1.25rem 1.5rem;
+  max-width: 480px;
+  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.06);
+}
+
+.title {
+  font-weight: 700;
+  color: #0f172a;
+  margin-bottom: 0.5rem;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.amount {
+  font-size: 1.4rem;
+  font-weight: 700;
+  color: #0ea5e9;
+  margin-bottom: 0.75rem;
+}
+
+.link {
+  display: inline-block;
+  color: #0284c7;
+  word-break: break-all;
+  font-size: 0.85rem;
+  margin-bottom: 1rem;
+  text-decoration: underline;
+}
+
+.completeButton {
+  background: #0ea5e9;
+  color: #fff;
+  border: none;
+  padding: 0.55rem 1.2rem;
+  border-radius: 8px;
+  font-weight: 600;
+  cursor: pointer;
+  font-size: 0.9rem;
+}
+
+.completeButton:hover {
+  background: #0284c7;
+}
+
+.completeButton:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}

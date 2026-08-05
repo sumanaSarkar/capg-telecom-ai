@@ -1,0 +1,171 @@
+.page {
+  max-width: 900px;
+}
+
+.title {
+  font-size: 1.4rem;
+  font-weight: 700;
+  color: #0f172a;
+  margin: 0 0 1.25rem 0;
+}
+
+.card {
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  padding: 1.5rem;
+  margin-bottom: 1.25rem;
+  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.06);
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 1rem;
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+}
+
+.fieldLabel {
+  font-size: 0.78rem;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: #94a3b8;
+  font-weight: 600;
+}
+
+.fieldValue {
+  font-size: 1rem;
+  color: #0f172a;
+  font-weight: 600;
+}
+
+.badge {
+  display: inline-block;
+  padding: 0.2rem 0.6rem;
+  border-radius: 999px;
+  font-size: 0.78rem;
+  font-weight: 600;
+}
+
+.badgeGreen {
+  background: #dcfce7;
+  color: #166534;
+}
+
+.badgeYellow {
+  background: #fef9c3;
+  color: #854d0e;
+}
+
+.badgeRed {
+  background: #fee2e2;
+  color: #991b1b;
+}
+
+.badgeBlue {
+  background: #dbeafe;
+  color: #1e40af;
+}
+
+.list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.listRow {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0.85rem 1rem;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+}
+
+.emptyState {
+  color: #94a3b8;
+  font-size: 0.92rem;
+  padding: 1.5rem;
+  text-align: center;
+}
+
+.button {
+  background: #0ea5e9;
+  color: #fff;
+  border: none;
+  padding: 0.55rem 1.2rem;
+  border-radius: 8px;
+  font-weight: 600;
+  cursor: pointer;
+  font-size: 0.9rem;
+}
+
+.button:hover {
+  background: #0284c7;
+}
+
+.buttonSecondary {
+  background: transparent;
+  color: #ef4444;
+  border: 1px solid #fca5a5;
+  padding: 0.55rem 1.2rem;
+  border-radius: 8px;
+  font-weight: 600;
+  cursor: pointer;
+  font-size: 0.9rem;
+}
+
+.button:disabled,
+.buttonSecondary:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.input {
+  width: 100%;
+  padding: 0.55rem 0.75rem;
+  border: 1px solid #cbd5e1;
+  border-radius: 8px;
+  font-size: 0.92rem;
+  box-sizing: border-box;
+  margin-bottom: 0.75rem;
+}
+
+.select {
+  width: 100%;
+  padding: 0.55rem 0.75rem;
+  border: 1px solid #cbd5e1;
+  border-radius: 8px;
+  font-size: 0.92rem;
+  box-sizing: border-box;
+  margin-bottom: 0.75rem;
+}
+
+.planCard {
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  padding: 1.25rem;
+  position: relative;
+}
+
+.planCardRecommended {
+  border-color: #0ea5e9;
+  box-shadow: 0 0 0 2px rgba(14, 165, 233, 0.15);
+}
+
+.recommendedTag {
+  position: absolute;
+  top: -10px;
+  right: 1rem;
+  background: #0ea5e9;
+  color: #fff;
+  font-size: 0.7rem;
+  font-weight: 700;
+  padding: 0.15rem 0.6rem;
+  border-radius: 999px;
+}
