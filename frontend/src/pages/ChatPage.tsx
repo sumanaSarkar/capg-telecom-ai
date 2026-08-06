@@ -9,17 +9,10 @@ import { SuccessCard } from '../components/chat/SuccessCard';
 import { ErrorMessage } from '../components/common/ErrorMessage';
 import { LoadingSpinner } from '../components/common/LoadingSpinner';
 import { useAuth } from '../hooks/useAuth';
+import { useChat } from '../hooks/useChat';
 import { api } from '../services/api';
 import type { OrchestratorResponse } from '../services/types';
 import styles from './ChatPage.module.css';
-
-interface ChatMessage {
-  id: string;
-  role: 'user' | 'assistant';
-  text?: string;
-  response?: OrchestratorResponse;
-  actioned?: boolean;
-}
 
 type SpeechRecognitionConstructor = new () => SpeechRecognitionInstance;
 
@@ -47,21 +40,15 @@ interface SpeechRecognitionErrorEventLike {
   error: string;
 }
 
-const WELCOME_MESSAGE =
-  "Hello! I'm your AI telecom assistant. How can I help you today? " +
-  "Try: 'Show my past 2 months bill', 'Show all available plans', or 'What's my current plan?'";
-
 export function ChatPage() {
   const { user } = useAuth();
+  const { messages, setMessages, appendAssistantMessage } = useChat();
   const customerId = user?.customerId ?? 'cust-001';
-
-  const [messages, setMessages] = useState<ChatMessage[]>([
-    { id: 'welcome', role: 'assistant', text: WELCOME_MESSAGE },
-  ]);
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [listening, setListening] = useState(false);
+  const [voiceReady, setVoiceReady] = useState(false);
   const threadRef = useRef<HTMLDivElement>(null);
   const recognitionRef = useRef<SpeechRecognitionInstance | null>(null);
   const submitMessageRef = useRef<((message: string) => Promise<void>) | null>(null);
@@ -80,6 +67,8 @@ export function ChatPage() {
         SpeechRecognition?: SpeechRecognitionConstructor;
         webkitSpeechRecognition?: SpeechRecognitionConstructor;
       }).webkitSpeechRecognition;
+
+    setVoiceReady(Boolean(recognitionConstructor));
 
     if (!recognitionConstructor) {
       return;
@@ -102,6 +91,7 @@ export function ChatPage() {
     };
     recognition.onerror = () => {
       setListening(false);
+      setError('Voice input was interrupted. Please try again.');
     };
     recognition.onend = () => {
       setListening(false);
@@ -116,7 +106,7 @@ export function ChatPage() {
   }, []);
 
   const appendAssistantResponse = (response: OrchestratorResponse) => {
-    setMessages((prev) => [...prev, { id: crypto.randomUUID(), role: 'assistant', response }]);
+    appendAssistantMessage(response, false);
   };
 
   const markActioned = (id: string) => {
@@ -126,6 +116,11 @@ export function ChatPage() {
   const submitMessage = async (message: string) => {
     const trimmed = message.trim();
     if (!trimmed || loading) return;
+
+    if (recognitionRef.current && listening) {
+      recognitionRef.current.stop();
+      setListening(false);
+    }
 
     setMessages((prev) => [...prev, { id: crypto.randomUUID(), role: 'user', text: trimmed }]);
     setInput('');
@@ -156,7 +151,13 @@ export function ChatPage() {
   };
 
   const toggleVoiceInput = () => {
-    if (!recognitionRef.current || loading) {
+    if (input.trim() || loading) {
+      setError('Please send the current text message first before using voice input.');
+      return;
+    }
+
+    if (!voiceReady || !recognitionRef.current) {
+      setError('Voice input is not supported in this browser.');
       return;
     }
 
@@ -377,18 +378,29 @@ export function ChatPage() {
       {error && <ErrorMessage message={error} />}
 
       <form className={styles.inputBar} onSubmit={handleSend}>
-        <input
-          className={styles.input}
-          value={input}
-          onChange={(e) => setInput(e.target.value)}
-          placeholder="Type your message..."
-          disabled={loading}
-        />
+        <div className={styles.inputWrapper}>
+          <input
+            className={styles.input}
+            value={input}
+            onChange={(e) => {
+              setInput(e.target.value);
+              if (e.target.value.trim() && listening) {
+                recognitionRef.current?.stop();
+                setListening(false);
+              }
+            }}
+            placeholder="Type or speak your message..."
+            disabled={loading}
+          />
+          <span className={styles.voiceStatus}>
+            {listening ? 'Listening...' : 'Tap the mic to talk'}
+          </span>
+        </div>
         <button
           className={`${styles.voiceButton} ${listening ? styles.voiceButtonActive : ''}`}
           type="button"
           onClick={toggleVoiceInput}
-          disabled={loading}
+          disabled={loading || Boolean(input.trim())}
           aria-label={listening ? 'Stop voice input' : 'Start voice input'}
           title={listening ? 'Stop voice input' : 'Start voice input'}
         >

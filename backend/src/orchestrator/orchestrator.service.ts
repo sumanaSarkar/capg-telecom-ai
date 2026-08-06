@@ -192,10 +192,10 @@ export class OrchestratorService {
     }
 
     if (this.isRoamingPackagesRequest(dto.message)) {
-      const roamingPackages = this.roamingService.getRoamingPackages();
+      const roamingPackages = this.roamingService.getRoamingPackages(dto.customerId);
       const finalMessage = await this.llmProvider.generateResponse(
         { count: roamingPackages.length },
-        'Here are all {{count}} available roaming packages:',
+        'Here are all {{count}} available roaming packages for your account:',
       );
 
       return {

@@ -24,11 +24,30 @@ describe('PlanService', () => {
     }
   });
 
-  it('includes exactly one recommended plan', () => {
-    const plans = service.getPlans();
-    const recommended = plans.filter((p) => p.recommended);
-    expect(recommended).toHaveLength(1);
-    expect(recommended[0].id).toBe('plan-002');
+  it('returns customer-specific plans for each demo account', () => {
+    expect(service.getPlans('cust-001').map((plan) => plan.id)).toEqual([
+      'plan-001',
+      'plan-002',
+      'plan-003',
+    ]);
+    expect(service.getPlans('cust-002').map((plan) => plan.id)).toEqual([
+      'plan-011',
+      'plan-012',
+      'plan-013',
+    ]);
+    expect(service.getPlans('cust-003').map((plan) => plan.id)).toEqual([
+      'plan-021',
+      'plan-022',
+      'plan-023',
+    ]);
+  });
+
+  it('includes exactly one recommended plan per customer', () => {
+    for (const customerId of ['cust-001', 'cust-002', 'cust-003']) {
+      const plans = service.getPlans(customerId);
+      const recommended = plans.filter((p) => p.recommended);
+      expect(recommended).toHaveLength(1);
+    }
   });
 
   it('getPlanById returns the matching plan', () => {

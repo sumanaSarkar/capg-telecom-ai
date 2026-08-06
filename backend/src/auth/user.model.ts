@@ -12,4 +12,16 @@ export const MOCK_USERS: MockUser[] = [
     password: 'password123',
     customerId: 'cust-001',
   },
+  {
+    id: 'u2',
+    username: 'user2',
+    password: 'password123',
+    customerId: 'cust-002',
+  },
+  {
+    id: 'u3',
+    username: 'user3',
+    password: 'password123',
+    customerId: 'cust-003',
+  },
 ];

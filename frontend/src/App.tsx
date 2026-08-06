@@ -1,5 +1,6 @@
 import { Navigate, Route, Routes } from 'react-router-dom';
 import { AppLayout } from './components/layout/AppLayout';
+import { ChatProvider } from './hooks/useChat';
 import { AuthProvider } from './hooks/useAuth';
 import { AnalyticsPage } from './pages/AnalyticsPage';
 import { BillingPage } from './pages/BillingPage';
@@ -15,6 +16,7 @@ import { ProtectedRoute } from './routes/ProtectedRoute';
 function App() {
   return (
     <AuthProvider>
+      <ChatProvider>
       <Routes>
         <Route path="/login" element={<LoginPage />} />
         <Route
@@ -36,6 +38,7 @@ function App() {
         </Route>
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
+      </ChatProvider>
     </AuthProvider>
   );
 }

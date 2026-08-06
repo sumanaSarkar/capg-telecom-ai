@@ -12,6 +12,26 @@ const PROFILES: Record<string, CustomerProfile> = {
     kycStatus: 'verified',
     accountBalance: 45.5,
   },
+  'cust-002': {
+    customerId: 'cust-002',
+    name: 'Maya Chen',
+    email: 'maya@example.com',
+    phone: '+1-555-0102',
+    plan: 'Standard 20GB',
+    customerType: 'prepaid',
+    kycStatus: 'verified',
+    accountBalance: 18.25,
+  },
+  'cust-003': {
+    customerId: 'cust-003',
+    name: 'Liam Patel',
+    email: 'liam@example.com',
+    phone: '+1-555-0103',
+    plan: 'Premium Unlimited',
+    customerType: 'postpaid',
+    kycStatus: 'verified',
+    accountBalance: 92.75,
+  },
 };
 
 @Injectable()
