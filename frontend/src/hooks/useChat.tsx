@@ -22,7 +22,7 @@ interface ChatContextValue {
 const ChatContext = createContext<ChatContextValue | undefined>(undefined);
 
 const WELCOME_MESSAGE =
-  "Hello! I'm your AI telecom assistant. How can I help you today? " +
+  "Hello! I'm Telly, your telecom assistant. How can I help you today? " +
   "Try: 'Show my past 2 months bill', 'Show all available plans', or 'What's my current plan?'";
 
 function speakAssistantMessage(response: OrchestratorResponse) {
