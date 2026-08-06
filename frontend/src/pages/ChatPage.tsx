@@ -1,4 +1,4 @@
-import { Send } from 'lucide-react';
+import { Mic, MicOff, Send } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import type { FormEvent } from 'react';
 import axios from 'axios';
@@ -21,9 +21,35 @@ interface ChatMessage {
   actioned?: boolean;
 }
 
+type SpeechRecognitionConstructor = new () => SpeechRecognitionInstance;
+
+interface SpeechRecognitionInstance {
+  lang: string;
+  continuous: boolean;
+  interimResults: boolean;
+  onresult: ((event: SpeechRecognitionResultEventLike) => void) | null;
+  onerror: ((event: SpeechRecognitionErrorEventLike) => void) | null;
+  onend: (() => void) | null;
+  start: () => void;
+  stop: () => void;
+}
+
+interface SpeechRecognitionResultEventLike {
+  resultIndex: number;
+  results: ArrayLike<{
+    isFinal: boolean;
+    [index: number]: { transcript: string };
+    length: number;
+  }>;
+}
+
+interface SpeechRecognitionErrorEventLike {
+  error: string;
+}
+
 const WELCOME_MESSAGE =
   "Hello! I'm your AI telecom assistant. How can I help you today? " +
-  "Try: 'Show my past bills' or 'Suggest the best data plan and recharge it'";
+  "Try: 'Show my past 2 months bill', 'Show all available plans', or 'What's my current plan?'";
 
 export function ChatPage() {
   const { user } = useAuth();
@@ -35,11 +61,59 @@ export function ChatPage() {
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [listening, setListening] = useState(false);
   const threadRef = useRef<HTMLDivElement>(null);
+  const recognitionRef = useRef<SpeechRecognitionInstance | null>(null);
+  const submitMessageRef = useRef<((message: string) => Promise<void>) | null>(null);
 
   useEffect(() => {
     threadRef.current?.scrollTo({ top: threadRef.current.scrollHeight, behavior: 'smooth' });
   }, [messages]);
+
+  useEffect(() => {
+    const recognitionConstructor =
+      (window as Window & {
+        SpeechRecognition?: SpeechRecognitionConstructor;
+        webkitSpeechRecognition?: SpeechRecognitionConstructor;
+      }).SpeechRecognition ??
+      (window as Window & {
+        SpeechRecognition?: SpeechRecognitionConstructor;
+        webkitSpeechRecognition?: SpeechRecognitionConstructor;
+      }).webkitSpeechRecognition;
+
+    if (!recognitionConstructor) {
+      return;
+    }
+
+    const recognition = new recognitionConstructor();
+    recognition.lang = 'en-US';
+    recognition.continuous = false;
+    recognition.interimResults = false;
+    recognition.onresult = (event) => {
+      const transcript = Array.from({ length: event.results.length }, (_, index) => event.results[index])
+        .slice(event.resultIndex)
+        .map((result) => result[0]?.transcript ?? '')
+        .join(' ')
+        .trim();
+
+      if (transcript) {
+        void submitMessageRef.current?.(transcript);
+      }
+    };
+    recognition.onerror = () => {
+      setListening(false);
+    };
+    recognition.onend = () => {
+      setListening(false);
+    };
+
+    recognitionRef.current = recognition;
+
+    return () => {
+      recognition.stop();
+      recognitionRef.current = null;
+    };
+  }, []);
 
   const appendAssistantResponse = (response: OrchestratorResponse) => {
     setMessages((prev) => [...prev, { id: crypto.randomUUID(), role: 'assistant', response }]);
@@ -49,18 +123,17 @@ export function ChatPage() {
     setMessages((prev) => prev.map((m) => (m.id === id ? { ...m, actioned: true } : m)));
   };
 
-  const handleSend = async (event: FormEvent) => {
-    event.preventDefault();
-    const message = input.trim();
-    if (!message || loading) return;
+  const submitMessage = async (message: string) => {
+    const trimmed = message.trim();
+    if (!trimmed || loading) return;
 
-    setMessages((prev) => [...prev, { id: crypto.randomUUID(), role: 'user', text: message }]);
+    setMessages((prev) => [...prev, { id: crypto.randomUUID(), role: 'user', text: trimmed }]);
     setInput('');
     setError(null);
     setLoading(true);
 
     try {
-      const response = await api.ask(message, customerId, 'ask');
+      const response = await api.ask(trimmed, customerId, 'ask');
       appendAssistantResponse(response);
     } catch (err) {
       if (axios.isAxiosError(err) && err.response?.status === 401) {
@@ -71,6 +144,30 @@ export function ChatPage() {
     } finally {
       setLoading(false);
     }
+  };
+
+  useEffect(() => {
+    submitMessageRef.current = submitMessage;
+  }, [submitMessage]);
+
+  const handleSend = async (event: FormEvent) => {
+    event.preventDefault();
+    await submitMessage(input);
+  };
+
+  const toggleVoiceInput = () => {
+    if (!recognitionRef.current || loading) {
+      return;
+    }
+
+    if (listening) {
+      recognitionRef.current.stop();
+      return;
+    }
+
+    setError(null);
+    setListening(true);
+    recognitionRef.current.start();
   };
 
   const handleConfirmPlan = async (messageId: string, response: OrchestratorResponse) => {
@@ -194,6 +291,81 @@ export function ChatPage() {
                 {message.response.stage === 'billing' && (
                   <BillingHistoryCard records={message.response.billingHistory ?? []} />
                 )}
+
+                {message.response.stage === 'plans' && message.response.availablePlans && (
+                  <div className={styles.planGrid}>
+                    {message.response.availablePlans.map((plan) => (
+                      <div
+                        key={plan.id}
+                        className={`${styles.planCard} ${
+                          plan.recommended ? styles.planCardRecommended : ''
+                        }`}
+                      >
+                        {plan.recommended && <span className={styles.recommendedTag}>Recommended</span>}
+                        <h3 className={styles.planName}>{plan.name}</h3>
+                        <p className={styles.planPrice}>${plan.price.toFixed(2)}/mo</p>
+                        <p className={styles.planSummary}>
+                          {plan.dataGB === -1 ? 'Unlimited data' : `${plan.dataGB}GB data`} ·{' '}
+                          {plan.callMinutes === -1 ? 'Unlimited calls' : `${plan.callMinutes} minutes`}
+                        </p>
+                        <ul className={styles.planFeatures}>
+                          {plan.features.map((feature) => (
+                            <li key={feature}>{feature}</li>
+                          ))}
+                        </ul>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {message.response.stage === 'recharge-options' && message.response.rechargeOptions && (
+                  <div className={styles.planGrid}>
+                    {message.response.rechargeOptions.map((plan) => (
+                      <div
+                        key={plan.id}
+                        className={`${styles.planCard} ${
+                          plan.recommended ? styles.planCardRecommended : ''
+                        }`}
+                      >
+                        {plan.recommended && <span className={styles.recommendedTag}>Recommended</span>}
+                        <h3 className={styles.planName}>{plan.name}</h3>
+                        <p className={styles.planPrice}>${plan.price.toFixed(2)}/mo</p>
+                        <p className={styles.planSummary}>
+                          {plan.dataGB === -1 ? 'Unlimited data' : `${plan.dataGB}GB data`} ·{' '}
+                          {plan.callMinutes === -1 ? 'Unlimited calls' : `${plan.callMinutes} minutes`}
+                        </p>
+                        <ul className={styles.planFeatures}>
+                          {plan.features.map((feature) => (
+                            <li key={feature}>{feature}</li>
+                          ))}
+                        </ul>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {message.response.stage === 'roaming-packages' && message.response.roamingPackages && (
+                  <div className={styles.planGrid}>
+                    {message.response.roamingPackages.map((pkg) => (
+                      <div
+                        key={pkg.id}
+                        className={`${styles.planCard} ${
+                          pkg.recommended ? styles.planCardRecommended : ''
+                        }`}
+                      >
+                        {pkg.recommended && <span className={styles.recommendedTag}>Recommended</span>}
+                        <h3 className={styles.planName}>{pkg.name}</h3>
+                        <p className={styles.planPrice}>${pkg.price.toFixed(2)}</p>
+                        <p className={styles.planSummary}>
+                          {pkg.dataGB}GB data · {pkg.days} days
+                        </p>
+                        <p className={styles.planSummary}>
+                          Countries: {pkg.countries.join(', ')}
+                        </p>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
             )}
           </div>
@@ -212,6 +384,16 @@ export function ChatPage() {
           placeholder="Type your message..."
           disabled={loading}
         />
+        <button
+          className={`${styles.voiceButton} ${listening ? styles.voiceButtonActive : ''}`}
+          type="button"
+          onClick={toggleVoiceInput}
+          disabled={loading}
+          aria-label={listening ? 'Stop voice input' : 'Start voice input'}
+          title={listening ? 'Stop voice input' : 'Start voice input'}
+        >
+          {listening ? <MicOff size={18} /> : <Mic size={18} />}
+        </button>
         <button className={styles.sendButton} type="submit" disabled={loading || !input.trim()}>
           <Send size={18} />
         </button>

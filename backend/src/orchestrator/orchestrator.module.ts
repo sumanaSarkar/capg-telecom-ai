@@ -5,6 +5,7 @@ import { PaymentModule } from '../agents/payment/payment.module';
 import { PlanModule } from '../agents/plan/plan.module';
 import { ProfileModule } from '../agents/profile/profile.module';
 import { RechargeModule } from '../agents/recharge/recharge.module';
+import { RoamingModule } from '../agents/roaming/roaming.module';
 import { AuthModule } from '../auth/auth.module';
 import { LlmModule } from '../llm/llm.module';
 import { OrchestratorController } from './orchestrator.controller';
@@ -20,6 +21,7 @@ import { RecommendationService } from './recommendation.service';
     PlanModule,
     PaymentModule,
     RechargeModule,
+    RoamingModule,
     BillingModule,
   ],
   controllers: [OrchestratorController],

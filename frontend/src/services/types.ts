@@ -77,7 +77,14 @@ export interface SupportTicket {
 }
 
 export type AskAction = 'ask' | 'confirm' | 'payment_success';
-export type OrchestratorStage = 'recommendation' | 'payment' | 'complete' | 'billing';
+export type OrchestratorStage =
+  | 'recommendation'
+  | 'payment'
+  | 'complete'
+  | 'billing'
+  | 'plans'
+  | 'recharge-options'
+  | 'roaming-packages';
 
 export interface OrchestratorResponse {
   intent: string;
@@ -86,6 +93,17 @@ export interface OrchestratorResponse {
     plan: Plan;
     reason: string;
   };
+  availablePlans?: Plan[];
+  rechargeOptions?: Plan[];
+  roamingPackages?: {
+    id: string;
+    name: string;
+    countries: string[];
+    dataGB: number;
+    days: number;
+    price: number;
+    recommended: boolean;
+  }[];
   paymentUrl?: string;
   paymentId?: string;
   finalMessage: string;

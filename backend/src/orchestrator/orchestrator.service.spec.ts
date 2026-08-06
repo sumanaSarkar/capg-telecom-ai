@@ -4,6 +4,7 @@ import { PaymentService } from '../agents/payment/payment.service';
 import { PlanService } from '../agents/plan/plan.service';
 import { ProfileService } from '../agents/profile/profile.service';
 import { RechargeService } from '../agents/recharge/recharge.service';
+import { RoamingService } from '../agents/roaming/roaming.service';
 import { ILlmProvider } from '../llm/llm-provider.interface';
 import { OrchestratorService } from './orchestrator.service';
 import { RecommendationService } from './recommendation.service';
@@ -17,6 +18,7 @@ describe('OrchestratorService', () => {
   let planService: PlanService;
   let paymentService: PaymentService;
   let rechargeService: RechargeService;
+  let roamingService: RoamingService;
   let billingService: BillingService;
 
   beforeEach(() => {
@@ -36,6 +38,7 @@ describe('OrchestratorService', () => {
     planService = new PlanService();
     paymentService = new PaymentService();
     rechargeService = new RechargeService();
+    roamingService = new RoamingService();
     billingService = new BillingService();
 
     orchestrator = new OrchestratorService(
@@ -45,6 +48,7 @@ describe('OrchestratorService', () => {
       planService,
       paymentService,
       rechargeService,
+      roamingService,
       billingService,
       new RecommendationService(),
     );
@@ -73,6 +77,88 @@ describe('OrchestratorService', () => {
     expect(result.recommendation).toBeDefined();
     expect(result.recommendation?.plan).toBeDefined();
     expect(result.finalMessage).toBe('Generated response text');
+  });
+
+  it('returns the current plan without a recharge prompt', async () => {
+    const result = await orchestrator.ask({
+      message: 'What is my current plan?',
+      customerId: 'cust-001',
+    });
+
+    expect(result.stage).toBe('complete');
+    expect(result.finalMessage).toContain('Your current plan is Basic 5GB');
+    expect(result.finalMessage.toLowerCase()).not.toContain('recharge');
+  });
+
+  it('returns all available plans when the user asks for available plans', async () => {
+    const result = await orchestrator.ask({
+      message: 'Show all available plans',
+      customerId: 'cust-001',
+    });
+
+    expect(result.stage).toBe('plans');
+    expect(result.availablePlans).toHaveLength(3);
+    expect(result.finalMessage).toBe('Here are all 3 available plans:');
+  });
+
+  it('returns recharge options without a recommendation card when the user asks for recharge options', async () => {
+    const result = await orchestrator.ask({
+      message: 'Show available recharge options',
+      customerId: 'cust-001',
+    });
+
+    expect(result.stage).toBe('recharge-options');
+    expect(result.rechargeOptions).toHaveLength(3);
+    expect(result.finalMessage).toBe('Here are all 3 available recharge options:');
+  });
+
+  it('returns roaming packages when the user asks for roaming packages', async () => {
+    const result = await orchestrator.ask({
+      message: 'Show available roaming packages',
+      customerId: 'cust-001',
+    });
+
+    expect(result.stage).toBe('roaming-packages');
+    expect(result.roamingPackages).toHaveLength(3);
+    expect(result.finalMessage).toBe('Here are all 3 available roaming packages:');
+  });
+
+  it('returns the requested number of billing months', async () => {
+    const result = await orchestrator.ask({
+      message: 'Show my last 3 months bill',
+      customerId: 'cust-001',
+    });
+
+    expect(result.stage).toBe('billing');
+    expect(result.billingHistory).toHaveLength(3);
+    expect(result.finalMessage).toBe('Here are your past 3 months of billing records (3 found):');
+  });
+
+  it('returns the last month of billing when the user asks for last month', async () => {
+    const result = await orchestrator.ask({
+      message: 'My last month bill',
+      customerId: 'cust-001',
+    });
+
+    expect(result.stage).toBe('billing');
+    expect(result.billingHistory).toHaveLength(1);
+    expect(result.finalMessage).toBe('Here are your past 1 month of billing records (1 found):');
+  });
+
+  it('captures an explicitly named plan in the recharge request', async () => {
+    const result = await orchestrator.ask({
+      message: 'Recharge with premium unlimited one',
+      customerId: 'cust-001',
+    });
+
+    expect(result.stage).toBe('recommendation');
+    expect(result.recommendation?.plan).toMatchObject({
+      name: 'Premium Unlimited',
+    });
+    expect(result.context?.selectedPlan).toMatchObject({
+      name: 'Premium Unlimited',
+    });
+    expect(result.finalMessage).toContain('Premium Unlimited');
   });
 
   it('moves to the payment stage when the user confirms a plan', async () => {

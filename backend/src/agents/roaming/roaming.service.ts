@@ -1,5 +1,5 @@
 import { Injectable } from '@nestjs/common';
-import { RoamingStatus } from './roaming.model';
+import { RoamingPackage, RoamingStatus } from './roaming.model';
 
 const COUNTRIES_COVERED = [
   'France',
@@ -7,6 +7,36 @@ const COUNTRIES_COVERED = [
   'Spain',
   'Italy',
   'United Kingdom',
+];
+
+const ROAMING_PACKAGES: RoamingPackage[] = [
+  {
+    id: 'roam-001',
+    name: 'Europe Lite',
+    countries: ['France', 'Germany', 'Spain', 'Italy'],
+    dataGB: 2,
+    days: 7,
+    price: 12.99,
+    recommended: false,
+  },
+  {
+    id: 'roam-002',
+    name: 'Europe Plus',
+    countries: ['France', 'Germany', 'Spain', 'Italy', 'United Kingdom'],
+    dataGB: 5,
+    days: 14,
+    price: 24.99,
+    recommended: true,
+  },
+  {
+    id: 'roam-003',
+    name: 'Global Max',
+    countries: ['France', 'Germany', 'Spain', 'Italy', 'United Kingdom'],
+    dataGB: 10,
+    days: 30,
+    price: 39.99,
+    recommended: false,
+  },
 ];
 
 @Injectable()
@@ -28,6 +58,10 @@ export class RoamingService {
 
   getRoamingStatus(customerId: string): RoamingStatus {
     return this.getOrCreate(customerId);
+  }
+
+  getRoamingPackages(): RoamingPackage[] {
+    return ROAMING_PACKAGES;
   }
 
   enableRoaming(customerId: string): RoamingStatus {

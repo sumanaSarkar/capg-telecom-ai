@@ -37,7 +37,7 @@ export function PlanRecommendationCard({
           disabled={disabled}
           type="button"
         >
-          Yes, recharge
+          Yes, continue
         </button>
         <button
           className={styles.declineButton}
