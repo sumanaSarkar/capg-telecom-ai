@@ -231,7 +231,7 @@ export function ChatPage() {
   return (
     <div className={styles.chatPage}>
       <div className={styles.header}>
-        <h1 className={styles.title}>AI Assistant</h1>
+        <h1 className={styles.title}>Capgemini Telecom AI Assistant</h1>
         <p className={styles.subtitle}>
           Ask about plans, recharges, billing, roaming, eSIM or support.
         </p>
