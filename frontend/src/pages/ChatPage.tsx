@@ -51,7 +51,7 @@ export function ChatPage() {
   const [voiceReady, setVoiceReady] = useState(false);
   const threadRef = useRef<HTMLDivElement>(null);
   const recognitionRef = useRef<SpeechRecognitionInstance | null>(null);
-  const submitMessageRef = useRef<((message: string) => Promise<void>) | null>(null);
+  const submitMessageRef = useRef<((message: string, shouldSpeak?: boolean) => Promise<void>) | null>(null);
 
   useEffect(() => {
     threadRef.current?.scrollTo({ top: threadRef.current.scrollHeight, behavior: 'smooth' });
@@ -86,7 +86,7 @@ export function ChatPage() {
         .trim();
 
       if (transcript) {
-        void submitMessageRef.current?.(transcript);
+        void submitMessageRef.current?.(transcript, true);
       }
     };
     recognition.onerror = () => {
@@ -105,15 +105,15 @@ export function ChatPage() {
     };
   }, []);
 
-  const appendAssistantResponse = (response: OrchestratorResponse) => {
-    appendAssistantMessage(response, false);
+  const appendAssistantResponse = (response: OrchestratorResponse, shouldSpeak = false) => {
+    appendAssistantMessage(response, shouldSpeak);
   };
 
   const markActioned = (id: string) => {
     setMessages((prev) => prev.map((m) => (m.id === id ? { ...m, actioned: true } : m)));
   };
 
-  const submitMessage = async (message: string) => {
+  const submitMessage = async (message: string, shouldSpeak = false) => {
     const trimmed = message.trim();
     if (!trimmed || loading) return;
 
@@ -129,7 +129,7 @@ export function ChatPage() {
 
     try {
       const response = await api.ask(trimmed, customerId, 'ask');
-      appendAssistantResponse(response);
+      appendAssistantResponse(response, shouldSpeak);
     } catch (err) {
       if (axios.isAxiosError(err) && err.response?.status === 401) {
         setError('Your session has expired. Please sign in again.');

@@ -25,6 +25,25 @@ const WELCOME_MESSAGE =
   "Hello! I'm your AI telecom assistant. How can I help you today? " +
   "Try: 'Show my past 2 months bill', 'Show all available plans', or 'What's my current plan?'";
 
+function speakAssistantMessage(response: OrchestratorResponse) {
+  if (typeof window === 'undefined' || typeof window.speechSynthesis === 'undefined') {
+    return;
+  }
+
+  const text = response.finalMessage?.trim();
+  if (!text) {
+    return;
+  }
+
+  window.speechSynthesis.cancel();
+  const utterance = new SpeechSynthesisUtterance(text);
+  utterance.lang = 'en-US';
+  utterance.rate = 1;
+  utterance.pitch = 1;
+  utterance.volume = 1;
+  window.speechSynthesis.speak(utterance);
+}
+
 function getStorageKey(customerId?: string): string {
   return `${STORAGE_KEY_PREFIX}:${customerId ?? 'guest'}`;
 }
@@ -83,8 +102,12 @@ export function ChatProvider({ children }: { children: ReactNode }) {
     window.localStorage.setItem(getStorageKey(customerId), JSON.stringify(messages));
   }, [messages, customerId]);
 
-  const appendAssistantMessage = (response: OrchestratorResponse, _shouldSpeak = false) => {
+  const appendAssistantMessage = (response: OrchestratorResponse, shouldSpeak = false) => {
     setMessages((prev) => [...prev, { id: crypto.randomUUID(), role: 'assistant', response }]);
+
+    if (shouldSpeak) {
+      speakAssistantMessage(response);
+    }
   };
 
   const value = useMemo(
