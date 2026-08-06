@@ -4,6 +4,7 @@ import type { OrchestratorResponse } from '../services/types';
 import { useAuth } from './useAuth';
 
 const STORAGE_KEY_PREFIX = 'telecom-ai-chat';
+const MAX_HISTORY_MESSAGES = 5;
 
 export interface ChatMessage {
   id: string;
@@ -17,13 +18,14 @@ interface ChatContextValue {
   messages: ChatMessage[];
   setMessages: Dispatch<SetStateAction<ChatMessage[]>>;
   appendAssistantMessage: (response: OrchestratorResponse, shouldSpeak?: boolean) => void;
+  clearChat: () => void;
 }
 
 const ChatContext = createContext<ChatContextValue | undefined>(undefined);
 
 const WELCOME_MESSAGE =
   "Hello! I'm Telly, your telecom assistant. How can I help you today? " +
-  "Try: 'Show my past 2 months bill', 'Show all available plans', or 'What's my current plan?'";
+  "Try: 'Show my past 2 months bill', 'Show all available plans', or 'What is my current plan?'";
 
 function speakAssistantMessage(response: OrchestratorResponse) {
   if (typeof window === 'undefined' || typeof window.speechSynthesis === 'undefined') {
@@ -60,10 +62,16 @@ function readStoredMessages(customerId?: string): ChatMessage[] {
     }
 
     const parsed = JSON.parse(stored) as ChatMessage[];
-    return Array.isArray(parsed) && parsed.length > 0 ? parsed : [];
+    return Array.isArray(parsed) && parsed.length > 0
+      ? parsed.slice(-MAX_HISTORY_MESSAGES)
+      : [];
   } catch {
     return [];
   }
+}
+
+function trimMessages(messages: ChatMessage[]): ChatMessage[] {
+  return messages.slice(-MAX_HISTORY_MESSAGES);
 }
 
 export function ChatProvider({ children }: { children: ReactNode }) {
@@ -99,19 +107,30 @@ export function ChatProvider({ children }: { children: ReactNode }) {
       return;
     }
 
-    window.localStorage.setItem(getStorageKey(customerId), JSON.stringify(messages));
+    window.localStorage.setItem(getStorageKey(customerId), JSON.stringify(trimMessages(messages)));
   }, [messages, customerId]);
 
   const appendAssistantMessage = (response: OrchestratorResponse, shouldSpeak = false) => {
-    setMessages((prev) => [...prev, { id: crypto.randomUUID(), role: 'assistant', response }]);
+    setMessages((prev) => trimMessages([...prev, { id: crypto.randomUUID(), role: 'assistant', response }]));
 
     if (shouldSpeak) {
       speakAssistantMessage(response);
     }
   };
 
+  const clearChat = () => {
+    const freshConversation: ChatMessage[] = [
+      { id: 'welcome', role: 'assistant', text: WELCOME_MESSAGE },
+    ];
+    setMessages(freshConversation);
+
+    if (typeof window !== 'undefined') {
+      window.localStorage.setItem(getStorageKey(customerId), JSON.stringify(freshConversation));
+    }
+  };
+
   const value = useMemo(
-    () => ({ messages, setMessages, appendAssistantMessage }),
+    () => ({ messages, setMessages, appendAssistantMessage, clearChat }),
     [messages],
   );
 

@@ -1,4 +1,4 @@
-import { Mic, MicOff, Send } from 'lucide-react';
+import { Mic, MicOff, Send, Sparkles } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import type { FormEvent } from 'react';
 import axios from 'axios';
@@ -40,9 +40,11 @@ interface SpeechRecognitionErrorEventLike {
   error: string;
 }
 
+const NON_TELECOM_BANNER_TEXT = 'I am not available for this service.';
+
 export function ChatPage() {
   const { user } = useAuth();
-  const { messages, setMessages, appendAssistantMessage } = useChat();
+  const { messages, setMessages, appendAssistantMessage, clearChat } = useChat();
   const customerId = user?.customerId ?? 'cust-001';
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
@@ -228,13 +230,36 @@ export function ChatPage() {
     }
   };
 
+  const handleStartNewChat = () => {
+    if (recognitionRef.current && listening) {
+      recognitionRef.current.stop();
+      setListening(false);
+    }
+
+    setInput('');
+    setError(null);
+    setLoading(false);
+    clearChat();
+  };
+
+  const isNonTelecomBanner = (response: OrchestratorResponse) =>
+    response.finalMessage.startsWith(NON_TELECOM_BANNER_TEXT);
+
   return (
     <div className={styles.chatPage}>
       <div className={styles.header}>
-        <h1 className={styles.title}>Capgemini Telecom AI Assistant</h1>
-        <p className={styles.subtitle}>
-          Ask about plans, recharges, billing, roaming, eSIM or support.
-        </p>
+        <div className={styles.headerTop}>
+          <div>
+            <h1 className={styles.title}>Capgemini Telecom AI Assistant</h1>
+            <p className={styles.subtitle}>
+              Ask about plans, recharges, billing, roaming, eSIM or support.
+            </p>
+          </div>
+          <button className={styles.newChatButton} type="button" onClick={handleStartNewChat}>
+            <Sparkles size={16} />
+            New chat
+          </button>
+        </div>
       </div>
 
       <div className={styles.thread} ref={threadRef}>
@@ -256,8 +281,21 @@ export function ChatPage() {
             )}
 
             {message.response && (
-              <div className={`${styles.bubble} ${styles.bubbleAssistant}`}>
-                <div style={{ marginBottom: '0.75rem' }}>{message.response.finalMessage}</div>
+              <div
+                className={`${styles.bubble} ${styles.bubbleAssistant} ${
+                  isNonTelecomBanner(message.response) ? styles.serviceBanner : ''
+                }`}
+              >
+                <div
+                  className={
+                    isNonTelecomBanner(message.response)
+                      ? styles.serviceBannerText
+                      : undefined
+                  }
+                  style={{ marginBottom: '0.75rem' }}
+                >
+                  {message.response.finalMessage}
+                </div>
 
                 {message.response.stage === 'recommendation' &&
                   message.response.recommendation && (

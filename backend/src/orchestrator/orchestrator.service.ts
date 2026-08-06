@@ -102,6 +102,39 @@ export class OrchestratorService {
     return /\b(available|all|list|show|compare)\b.*\broaming\b.*\bpackages?\b/i.test(message) || /\broaming\s+packages?\b/i.test(message) || /\broaming\s+options\b/i.test(message);
   }
 
+  private isTelecomRelatedRequest(message: string): boolean {
+    const normalized = this.normalizeText(message);
+    const telecomTerms = [
+      'plan',
+      'plans',
+      'recharge',
+      'topup',
+      'billing',
+      'bill',
+      'invoice',
+      'payment',
+      'pay',
+      'roaming',
+      'esim',
+      'sim',
+      'support',
+      'ticket',
+      'profile',
+      'account',
+      'analytics',
+      'usage',
+      'data',
+      'call',
+      'minutes',
+      'mobile',
+      'network',
+      'service',
+      'internet',
+    ];
+
+    return telecomTerms.some((term) => normalized.includes(term));
+  }
+
   private normalizeText(value: string): string {
     return value
       .toLowerCase()
@@ -139,6 +172,16 @@ export class OrchestratorService {
     intent: string,
     agents: string[],
   ): Promise<OrchestratorResponse> {
+    if (!this.isTelecomRelatedRequest(dto.message)) {
+      return {
+        intent,
+        agents,
+        finalMessage:
+          'I am not available for this service. Please ask about telecom plans, billing, roaming, eSIM, or support.',
+        stage: 'complete',
+      };
+    }
+
     if (this.isCurrentPlanRequest(dto.message)) {
       const profile = this.profileService.getProfile(dto.customerId);
       const currentPlan = this.planService.getPlans(dto.customerId).find((plan) => plan.name === profile.plan);

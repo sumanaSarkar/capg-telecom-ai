@@ -30,7 +30,26 @@ describe('OrchestratorService', () => {
 
     llmProvider = {
       detectIntent: detectIntentMock,
-      generateResponse: jest.fn().mockResolvedValue('Generated response text'),
+      generateResponse: jest.fn().mockImplementation(async (context: object, template: string) =>
+        template.replace(/{{\s*([\w.]+)\s*}}/g, (_match, path: string) => {
+          const value = path.split('.').reduce<unknown>(
+            (acc, key) =>
+              acc && typeof acc === 'object' ? (acc as Record<string, unknown>)[key] : undefined,
+            context,
+          );
+
+          if (value === undefined || value === null) return '';
+          if (
+            typeof value === 'string' ||
+            typeof value === 'number' ||
+            typeof value === 'boolean'
+          ) {
+            return String(value);
+          }
+
+          return JSON.stringify(value);
+        }),
+      ),
     };
 
     profileService = new ProfileService();
@@ -76,7 +95,7 @@ describe('OrchestratorService', () => {
     expect(result.agents).toEqual(['profile', 'analytics', 'plan']);
     expect(result.recommendation).toBeDefined();
     expect(result.recommendation?.plan).toBeDefined();
-    expect(result.finalMessage).toBe('Generated response text');
+    expect(result.finalMessage).toContain('I recommend the Standard 20GB plan at $59.99/mo.');
   });
 
   it('returns the current plan without a recharge prompt', async () => {
@@ -88,6 +107,18 @@ describe('OrchestratorService', () => {
     expect(result.stage).toBe('complete');
     expect(result.finalMessage).toContain('Your current plan is Basic 5GB');
     expect(result.finalMessage.toLowerCase()).not.toContain('recharge');
+  });
+
+  it('returns a telecom-specific fallback for unrelated requests', async () => {
+    const result = await orchestrator.ask({
+      message: 'pasta recipe',
+      customerId: 'cust-001',
+    });
+
+    expect(result.stage).toBe('complete');
+    expect(result.finalMessage).toBe(
+      'I am not available for this service. Please ask about telecom plans, billing, roaming, eSIM, or support.',
+    );
   });
 
   it('returns all available plans when the user asks for available plans', async () => {
@@ -120,10 +151,16 @@ describe('OrchestratorService', () => {
 
     expect(result.stage).toBe('roaming-packages');
     expect(result.roamingPackages).toHaveLength(3);
-    expect(result.finalMessage).toBe('Here are all 3 available roaming packages:');
+    expect(result.finalMessage).toBe('Here are all 3 available roaming packages for your account:');
   });
 
   it('returns the requested number of billing months', async () => {
+    detectIntentMock.mockResolvedValueOnce({
+      intent: 'billing_inquiry',
+      agents: ['billing'],
+      confidence: 0.9,
+    });
+
     const result = await orchestrator.ask({
       message: 'Show my last 3 months bill',
       customerId: 'cust-001',
@@ -135,6 +172,12 @@ describe('OrchestratorService', () => {
   });
 
   it('returns the last month of billing when the user asks for last month', async () => {
+    detectIntentMock.mockResolvedValueOnce({
+      intent: 'billing_inquiry',
+      agents: ['billing'],
+      confidence: 0.9,
+    });
+
     const result = await orchestrator.ask({
       message: 'My last month bill',
       customerId: 'cust-001',
@@ -192,8 +235,8 @@ describe('OrchestratorService', () => {
     });
 
     expect(rechargeSpy).toHaveBeenCalledWith('cust-001', 'plan-002');
-    expect(billingSpy).toHaveBeenCalledWith('cust-001', 'plan-002', 49.99);
+    expect(billingSpy).toHaveBeenCalledWith('cust-001', 'plan-002', 59.99);
     expect(result.stage).toBe('complete');
-    expect(result.finalMessage).toBe('Generated response text');
+    expect(result.finalMessage).toContain('Standard 20GB plan has been activated');
   });
 });
