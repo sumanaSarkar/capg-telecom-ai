@@ -5,7 +5,6 @@ import { AuthProvider } from './hooks/useAuth';
 import { AnalyticsPage } from './pages/AnalyticsPage';
 import { BillingPage } from './pages/BillingPage';
 import { ChatPage } from './pages/ChatPage';
-import { EsimPage } from './pages/EsimPage';
 import { LoginPage } from './pages/LoginPage';
 import { PlansPage } from './pages/PlansPage';
 import { ProfilePage } from './pages/ProfilePage';
@@ -35,7 +34,6 @@ function App() {
           <Route path="/plans" element={<PlansPage />} />
           <Route path="/billing" element={<BillingPage />} />
           <Route path="/roaming" element={<RoamingPage />} />
-          <Route path="/esim" element={<EsimPage />} />
           <Route path="/support" element={<SupportPage />} />
         </Route>
         <Route path="*" element={<Navigate to="/" replace />} />

@@ -171,6 +171,23 @@ describe('OrchestratorService', () => {
     expect(result.finalMessage).toBe('Here are your past 3 months of billing records (3 found):');
   });
 
+  it('returns the requested number of billing records for bill-count phrasing', async () => {
+    detectIntentMock.mockResolvedValueOnce({
+      intent: 'billing_inquiry',
+      agents: ['billing'],
+      confidence: 0.9,
+    });
+
+    const result = await orchestrator.ask({
+      message: 'show my last 2 bills',
+      customerId: 'cust-001',
+    });
+
+    expect(result.stage).toBe('billing');
+    expect(result.billingHistory).toHaveLength(2);
+    expect(result.finalMessage).toBe('Here are your last 2 billing records (2 found):');
+  });
+
   it('returns the last month of billing when the user asks for last month', async () => {
     detectIntentMock.mockResolvedValueOnce({
       intent: 'billing_inquiry',
@@ -238,5 +255,32 @@ describe('OrchestratorService', () => {
     expect(billingSpy).toHaveBeenCalledWith('cust-001', 'plan-002', 59.99);
     expect(result.stage).toBe('complete');
     expect(result.finalMessage).toContain('Standard 20GB plan has been activated');
+  });
+
+  it('retains only the last 5 communication traces per customer', async () => {
+    for (let i = 0; i < 7; i += 1) {
+      await orchestrator.ask({
+        message: `Show all available plans ${i}`,
+        customerId: 'cust-001',
+      });
+    }
+
+    const history = orchestrator.getHistory('cust-001');
+    expect(history).toHaveLength(5);
+    expect(history[0].request).toContain('2');
+    expect(history[4].request).toContain('6');
+  });
+
+  it('clears communication traces for a customer', async () => {
+    await orchestrator.ask({
+      message: 'Show all available plans',
+      customerId: 'cust-001',
+    });
+
+    expect(orchestrator.getHistory('cust-001').length).toBeGreaterThan(0);
+
+    orchestrator.clearHistory('cust-001');
+
+    expect(orchestrator.getHistory('cust-001')).toHaveLength(0);
   });
 });

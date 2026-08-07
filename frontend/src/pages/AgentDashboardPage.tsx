@@ -3,9 +3,39 @@ import { useEffect, useState } from 'react';
 import { LoadingSpinner } from '../components/common/LoadingSpinner';
 import { useAuth } from '../hooks/useAuth';
 import { api } from '../services/api';
-import type { AgentCommunicationTrace, OrchestratorResponse } from '../services/types';
+import type { AgentCommunicationTrace } from '../services/types';
 import type { ChatMessage } from '../hooks/useChat';
 import styles from './AgentDashboardPage.module.css';
+
+const MAX_FLOW_TRACES = 5;
+
+function getDashboardClearMarkerKey(customerId: string) {
+  return `telecom-ai-dashboard-cleared:${customerId}`;
+}
+
+function isDashboardCleared(customerId: string): boolean {
+  if (typeof window === 'undefined') {
+    return false;
+  }
+
+  return window.localStorage.getItem(getDashboardClearMarkerKey(customerId)) === '1';
+}
+
+function markDashboardCleared(customerId: string): void {
+  if (typeof window === 'undefined') {
+    return;
+  }
+
+  window.localStorage.setItem(getDashboardClearMarkerKey(customerId), '1');
+}
+
+function clearDashboardMarker(customerId: string): void {
+  if (typeof window === 'undefined') {
+    return;
+  }
+
+  window.localStorage.removeItem(getDashboardClearMarkerKey(customerId));
+}
 
 function getChatStorageKey(customerId: string) {
   return `telecom-ai-chat:${customerId}`;
@@ -96,7 +126,7 @@ function mergeHistory(
   const merged = [...backendHistory, ...localHistory];
   const seen = new Set<string>();
 
-  return merged.filter((trace) => {
+  const deduplicated = merged.filter((trace) => {
     const key = `${trace.customerId}|${trace.request}|${trace.intent}|${trace.stage}|${trace.response?.finalMessage ?? ''}|${trace.agents.join(',')}`;
     if (seen.has(key)) {
       return false;
@@ -104,6 +134,8 @@ function mergeHistory(
     seen.add(key);
     return true;
   });
+
+  return deduplicated.slice(-MAX_FLOW_TRACES);
 }
 
 export function AgentDashboardPage() {
@@ -113,6 +145,7 @@ export function AgentDashboardPage() {
   const [expandedIndex, setExpandedIndex] = useState<number | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [clearing, setClearing] = useState(false);
 
   useEffect(() => {
     let isMounted = true;
@@ -120,11 +153,15 @@ export function AgentDashboardPage() {
     const loadHistory = async () => {
       try {
         const data = await api.getAgentCommunicationHistory(customerId);
-        const localHistory = readStoredChatHistory(customerId);
+        const localHistory = isDashboardCleared(customerId) ? [] : readStoredChatHistory(customerId);
         const merged = mergeHistory(data, localHistory);
 
+        if (data.length > 0) {
+          clearDashboardMarker(customerId);
+        }
+
         if (isMounted) {
-          setHistory(merged.length > 0 ? merged : localHistory);
+          setHistory((merged.length > 0 ? merged : localHistory).slice(-MAX_FLOW_TRACES));
         }
       } catch {
         if (isMounted) {
@@ -149,6 +186,21 @@ export function AgentDashboardPage() {
     setExpandedIndex((prev) => (prev === index ? null : index));
   };
 
+  const handleClearDashboard = async () => {
+    setClearing(true);
+    setError(null);
+    try {
+      await api.clearAgentCommunicationHistory(customerId);
+      markDashboardCleared(customerId);
+      setHistory([]);
+      setExpandedIndex(null);
+    } catch {
+      setError('Unable to clear the dashboard history right now.');
+    } finally {
+      setClearing(false);
+    }
+  };
+
   return (
     <div className={styles.page}>
       <div className={styles.header}>
@@ -162,6 +214,14 @@ export function AgentDashboardPage() {
           <span className={styles.summaryLabel}>Tracked sessions</span>
           <strong>{history.length}</strong>
         </div>
+        <button
+          type="button"
+          className={styles.clearButton}
+          onClick={handleClearDashboard}
+          disabled={clearing || loading}
+        >
+          {clearing ? 'Clearing...' : 'Clear Dashboard'}
+        </button>
       </div>
 
       {loading && <LoadingSpinner />}

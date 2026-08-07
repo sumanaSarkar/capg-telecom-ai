@@ -59,6 +59,26 @@
   letter-spacing: 0.08em;
 }
 
+.clearButton {
+  border: 1px solid #cbd5e1;
+  background: #ffffff;
+  color: #334155;
+  border-radius: 999px;
+  padding: 0.6rem 1rem;
+  font-size: 0.85rem;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.clearButton:hover {
+  background: #f8fafc;
+}
+
+.clearButton:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
 .list {
   display: flex;
   flex-direction: column;

@@ -1,5 +1,5 @@
-import { Mic, MicOff, Send, Sparkles } from 'lucide-react';
-import { useEffect, useRef, useState } from 'react';
+import { AlertCircle, Bot, ChevronDown, ChevronUp, Clock3, Layers3, Mic, MicOff, Send, Sparkles } from 'lucide-react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import type { FormEvent } from 'react';
 import axios from 'axios';
 import { BillingHistoryCard } from '../components/chat/BillingHistoryCard';
@@ -11,7 +11,8 @@ import { LoadingSpinner } from '../components/common/LoadingSpinner';
 import { useAuth } from '../hooks/useAuth';
 import { useChat } from '../hooks/useChat';
 import { api } from '../services/api';
-import type { OrchestratorResponse } from '../services/types';
+import type { ChatMessage } from '../hooks/useChat';
+import type { AgentCommunicationTrace, OrchestratorResponse } from '../services/types';
 import styles from './ChatPage.module.css';
 
 type SpeechRecognitionConstructor = new () => SpeechRecognitionInstance;
@@ -41,6 +42,201 @@ interface SpeechRecognitionErrorEventLike {
 }
 
 const NON_TELECOM_BANNER_TEXT = 'I am not available for this service.';
+const MAX_FLOW_TRACES = 5;
+const FLOW_CLEAR_MARKER_PREFIX = 'telecom-ai-flow-clear-marker';
+
+function getFlowClearMarkerKey(customerId: string): string {
+  return `${FLOW_CLEAR_MARKER_PREFIX}:${customerId}`;
+}
+
+function readFlowClearMarker(customerId: string): string | null {
+  if (typeof window === 'undefined') {
+    return null;
+  }
+
+  return window.localStorage.getItem(getFlowClearMarkerKey(customerId));
+}
+
+function writeFlowClearMarker(customerId: string, messageId: string): void {
+  if (typeof window === 'undefined') {
+    return;
+  }
+
+  window.localStorage.setItem(getFlowClearMarkerKey(customerId), messageId);
+}
+
+function clearFlowClearMarker(customerId: string): void {
+  if (typeof window === 'undefined') {
+    return;
+  }
+
+  window.localStorage.removeItem(getFlowClearMarkerKey(customerId));
+}
+
+function getChatStorageKey(customerId: string) {
+  return `telecom-ai-chat:${customerId}`;
+}
+
+function readStoredChatHistory(customerId: string): AgentCommunicationTrace[] {
+  if (typeof window === 'undefined') {
+    return [];
+  }
+
+  try {
+    const stored = window.localStorage.getItem(getChatStorageKey(customerId));
+    if (!stored) {
+      return [];
+    }
+
+    const messages = JSON.parse(stored) as ChatMessage[];
+    const traces: AgentCommunicationTrace[] = [];
+    let currentTrace: AgentCommunicationTrace | null = null;
+
+    for (const message of messages) {
+      if (message.role === 'user' && message.text?.trim()) {
+        if (currentTrace && currentTrace.steps.length > 0) {
+          traces.push(currentTrace);
+        }
+
+        currentTrace = {
+          customerId,
+          request: message.text.trim(),
+          intent: '',
+          stage: 'complete',
+          agents: [],
+          steps: [],
+        };
+        continue;
+      }
+
+      if (message.role === 'assistant' && message.response && currentTrace) {
+        const response = message.response;
+
+        currentTrace.intent = currentTrace.intent || response.intent;
+        currentTrace.stage = response.stage || currentTrace.stage;
+        currentTrace.response = response;
+
+        const timestamp = new Date().toISOString();
+        currentTrace.steps.push({
+          agent: 'Orchestrator',
+          action: 'Intent detected',
+          detail: `Detected intent "${response.intent}" and selected agents: ${response.agents?.join(', ') || 'none'}.`,
+          timestamp,
+        });
+
+        for (const agent of response.agents ?? []) {
+          if (!currentTrace.agents.includes(agent)) {
+            currentTrace.agents.push(agent);
+          }
+          currentTrace.steps.push({
+            agent,
+            action: 'Agent engaged',
+            detail: `Agent ${agent} handled the request.`,
+            timestamp,
+          });
+        }
+
+        currentTrace.steps.push({
+          agent: 'LLM',
+          action: 'Generated response',
+          detail: 'LLM generated the final assistant response.',
+          timestamp,
+        });
+      }
+    }
+
+    if (currentTrace && currentTrace.steps.length > 0) {
+      traces.push(currentTrace);
+    }
+
+    return traces;
+  } catch {
+    return [];
+  }
+}
+
+function buildTracesFromMessages(messages: ChatMessage[], customerId: string): AgentCommunicationTrace[] {
+  const traces: AgentCommunicationTrace[] = [];
+  let currentTrace: AgentCommunicationTrace | null = null;
+
+  for (const message of messages) {
+    if (message.role === 'user' && message.text?.trim()) {
+      if (currentTrace && currentTrace.steps.length > 0) {
+        traces.push(currentTrace);
+      }
+
+      currentTrace = {
+        customerId,
+        request: message.text.trim(),
+        intent: '',
+        stage: 'complete',
+        agents: [],
+        steps: [],
+      };
+      continue;
+    }
+
+    if (message.role === 'assistant' && message.response && currentTrace) {
+      const response = message.response;
+
+      currentTrace.intent = currentTrace.intent || response.intent;
+      currentTrace.stage = response.stage || currentTrace.stage;
+      currentTrace.response = response;
+
+      const timestamp = new Date().toISOString();
+      currentTrace.steps.push({
+        agent: 'Orchestrator',
+        action: 'Intent detected',
+        detail: `Detected intent "${response.intent}" and selected agents: ${response.agents?.join(', ') || 'none'}.`,
+        timestamp,
+      });
+
+      for (const agent of response.agents ?? []) {
+        if (!currentTrace.agents.includes(agent)) {
+          currentTrace.agents.push(agent);
+        }
+        currentTrace.steps.push({
+          agent,
+          action: 'Agent engaged',
+          detail: `Agent ${agent} handled the request.`,
+          timestamp,
+        });
+      }
+
+      currentTrace.steps.push({
+        agent: 'LLM',
+        action: 'Generated response',
+        detail: 'LLM generated the final assistant response.',
+        timestamp,
+      });
+    }
+  }
+
+  if (currentTrace && currentTrace.steps.length > 0) {
+    traces.push(currentTrace);
+  }
+
+  return traces;
+}
+
+function mergeHistory(
+  backendHistory: AgentCommunicationTrace[],
+  localHistory: AgentCommunicationTrace[],
+): AgentCommunicationTrace[] {
+  const merged = [...backendHistory, ...localHistory];
+  const seen = new Set<string>();
+
+  const deduplicated = merged.filter((trace) => {
+    const key = `${trace.customerId}|${trace.request}|${trace.intent}|${trace.stage}|${trace.response?.finalMessage ?? ''}|${trace.agents.join(',')}`;
+    if (seen.has(key)) {
+      return false;
+    }
+    seen.add(key);
+    return true;
+  });
+
+  return deduplicated.slice(-MAX_FLOW_TRACES);
+}
 
 export function ChatPage() {
   const { user } = useAuth();
@@ -51,6 +247,13 @@ export function ChatPage() {
   const [error, setError] = useState<string | null>(null);
   const [listening, setListening] = useState(false);
   const [voiceReady, setVoiceReady] = useState(false);
+  const [backendHistory, setBackendHistory] = useState<AgentCommunicationTrace[]>([]);
+  const [localHistory, setLocalHistory] = useState<AgentCommunicationTrace[]>([]);
+  const [historyLoading, setHistoryLoading] = useState(true);
+  const [historyError, setHistoryError] = useState<string | null>(null);
+  const [clearingHistory, setClearingHistory] = useState(false);
+  const [expandedTraceIndex, setExpandedTraceIndex] = useState<number | null>(null);
+  const [flowStartMessageId, setFlowStartMessageId] = useState<string | null>(null);
   const threadRef = useRef<HTMLDivElement>(null);
   const recognitionRef = useRef<SpeechRecognitionInstance | null>(null);
   const submitMessageRef = useRef<((message: string, shouldSpeak?: boolean) => Promise<void>) | null>(null);
@@ -58,6 +261,74 @@ export function ChatPage() {
   useEffect(() => {
     threadRef.current?.scrollTo({ top: threadRef.current.scrollHeight, behavior: 'smooth' });
   }, [messages]);
+
+  useEffect(() => {
+    setLocalHistory(readStoredChatHistory(customerId));
+    setFlowStartMessageId(readFlowClearMarker(customerId));
+  }, [customerId]);
+
+  useEffect(() => {
+    const scopedMessages = (() => {
+      if (!flowStartMessageId) {
+        return messages;
+      }
+
+      const markerIndex = messages.findIndex((message) => message.id === flowStartMessageId);
+      return markerIndex >= 0 ? messages.slice(markerIndex + 1) : messages;
+    })();
+
+    const hasAssistantResponse = scopedMessages.some(
+      (message) => message.role === 'assistant' && Boolean(message.response),
+    );
+
+    if (!hasAssistantResponse) {
+      setLocalHistory([]);
+      setExpandedTraceIndex(null);
+      return;
+    }
+
+    const lastMessage = scopedMessages[scopedMessages.length - 1];
+    if (lastMessage?.role === 'assistant' && lastMessage.response) {
+      setLocalHistory(buildTracesFromMessages(scopedMessages, customerId).slice(-MAX_FLOW_TRACES));
+    }
+  }, [messages, customerId, flowStartMessageId]);
+
+  useEffect(() => {
+    let isMounted = true;
+
+    const loadHistory = async () => {
+      setHistoryLoading(true);
+      setHistoryError(null);
+      try {
+        const data = await api.getAgentCommunicationHistory(customerId);
+        if (isMounted) {
+          setBackendHistory(data.slice(-MAX_FLOW_TRACES));
+        }
+      } catch {
+        if (isMounted) {
+          setHistoryError('Live dashboard feed is temporarily unavailable.');
+          setBackendHistory([]);
+        }
+      } finally {
+        if (isMounted) {
+          setHistoryLoading(false);
+        }
+      }
+    };
+
+    void loadHistory();
+
+    return () => {
+      isMounted = false;
+    };
+  }, [customerId]);
+
+  const mergedHistory = useMemo(
+    () => mergeHistory(backendHistory, localHistory),
+    [backendHistory, localHistory],
+  );
+
+  const orderedHistory = useMemo(() => [...mergedHistory].reverse(), [mergedHistory]);
 
   useEffect(() => {
     const recognitionConstructor =
@@ -239,215 +510,327 @@ export function ChatPage() {
     setInput('');
     setError(null);
     setLoading(false);
+    setFlowStartMessageId(null);
+    clearFlowClearMarker(customerId);
     clearChat();
+  };
+
+  const handleClearDashboard = async () => {
+    setClearingHistory(true);
+    setHistoryError(null);
+    try {
+      await api.clearAgentCommunicationHistory(customerId);
+      setBackendHistory([]);
+      setLocalHistory([]);
+      setExpandedTraceIndex(null);
+      const markerId = messages[messages.length - 1]?.id ?? '';
+      setFlowStartMessageId(markerId || null);
+      writeFlowClearMarker(customerId, markerId);
+    } catch {
+      setHistoryError('Unable to clear dashboard traces right now. Please try again.');
+    } finally {
+      setClearingHistory(false);
+    }
   };
 
   const isNonTelecomBanner = (response: OrchestratorResponse) =>
     response.finalMessage.startsWith(NON_TELECOM_BANNER_TEXT);
 
+  const toggleTraceExpanded = (index: number) => {
+    setExpandedTraceIndex((prev) => (prev === index ? null : index));
+  };
+
   return (
     <div className={styles.chatPage}>
-      <div className={styles.header}>
-        <div className={styles.headerTop}>
-          <div>
-            <h1 className={styles.title}>Capgemini Telecom AI Assistant</h1>
-            <p className={styles.subtitle}>
-              Ask about plans, recharges, billing, roaming, eSIM or support.
-            </p>
+      <section className={styles.chatColumn}>
+        <div className={styles.header}>
+          <div className={styles.headerTop}>
+            <div>
+              <h1 className={styles.title}>Capgemini Telecom AI Assistant</h1>
+              <p className={styles.subtitle}>
+                Ask about plans, recharges, billing, roaming, or support.
+              </p>
+            </div>
+            <button className={styles.newChatButton} type="button" onClick={handleStartNewChat}>
+              <Sparkles size={16} />
+              New chat
+            </button>
           </div>
-          <button className={styles.newChatButton} type="button" onClick={handleStartNewChat}>
-            <Sparkles size={16} />
-            New chat
-          </button>
         </div>
-      </div>
 
-      <div className={styles.thread} ref={threadRef}>
-        {messages.map((message) => (
-          <div
-            key={message.id}
-            className={`${styles.messageRow} ${
-              message.role === 'user' ? styles.messageRowUser : styles.messageRowAssistant
-            }`}
-          >
-            {message.text && (
-              <div
-                className={`${styles.bubble} ${
-                  message.role === 'user' ? styles.bubbleUser : styles.bubbleAssistant
-                }`}
-              >
-                {message.text}
-              </div>
-            )}
-
-            {message.response && (
-              <div
-                className={`${styles.bubble} ${styles.bubbleAssistant} ${
-                  isNonTelecomBanner(message.response) ? styles.serviceBanner : ''
-                }`}
-              >
+        <div className={styles.thread} ref={threadRef}>
+          {messages.map((message) => (
+            <div
+              key={message.id}
+              className={`${styles.messageRow} ${
+                message.role === 'user' ? styles.messageRowUser : styles.messageRowAssistant
+              }`}
+            >
+              {message.text && (
                 <div
-                  className={
-                    isNonTelecomBanner(message.response)
-                      ? styles.serviceBannerText
-                      : undefined
-                  }
-                  style={{ marginBottom: '0.75rem' }}
+                  className={`${styles.bubble} ${
+                    message.role === 'user' ? styles.bubbleUser : styles.bubbleAssistant
+                  }`}
                 >
-                  {message.response.finalMessage}
+                  {message.text}
                 </div>
+              )}
 
-                {message.response.stage === 'recommendation' &&
-                  message.response.recommendation && (
-                    <PlanRecommendationCard
-                      plan={message.response.recommendation.plan}
-                      reason={message.response.recommendation.reason}
-                      onConfirm={() => handleConfirmPlan(message.id, message.response!)}
-                      onDecline={() => handleDeclinePlan(message.id)}
+              {message.response && (
+                <div
+                  className={`${styles.bubble} ${styles.bubbleAssistant} ${
+                    isNonTelecomBanner(message.response) ? styles.serviceBanner : ''
+                  }`}
+                >
+                  <div
+                    className={
+                      isNonTelecomBanner(message.response)
+                        ? styles.serviceBannerText
+                        : undefined
+                    }
+                    style={{ marginBottom: '0.75rem' }}
+                  >
+                    {message.response.finalMessage}
+                  </div>
+
+                  {message.response.stage === 'recommendation' &&
+                    message.response.recommendation && (
+                      <PlanRecommendationCard
+                        plan={message.response.recommendation.plan}
+                        reason={message.response.recommendation.reason}
+                        onConfirm={() => handleConfirmPlan(message.id, message.response!)}
+                        onDecline={() => handleDeclinePlan(message.id)}
+                        disabled={message.actioned || loading}
+                      />
+                    )}
+
+                  {message.response.stage === 'payment' && message.response.paymentUrl && (
+                    <PaymentCard
+                      paymentUrl={message.response.paymentUrl}
+                      amount={
+                        (message.response.context?.plan as { price?: number } | undefined)?.price
+                      }
+                      onComplete={() => {
+                        const plan = message.response?.context?.plan as { id: string } | undefined;
+                        if (!plan?.id) return;
+                        handlePaymentComplete(message.id, message.response!, plan.id);
+                      }}
                       disabled={message.actioned || loading}
                     />
                   )}
 
-                {message.response.stage === 'payment' && message.response.paymentUrl && (
-                  <PaymentCard
-                    paymentUrl={message.response.paymentUrl}
-                    amount={
-                      (message.response.context?.plan as { price?: number } | undefined)?.price
-                    }
-                    onComplete={() => {
-                      const plan = message.response?.context?.plan as { id: string } | undefined;
-                      if (!plan?.id) return;
-                      handlePaymentComplete(message.id, message.response!, plan.id);
-                    }}
-                    disabled={message.actioned || loading}
-                  />
-                )}
+                  {message.response.stage === 'complete' && (
+                    <SuccessCard message={message.response.finalMessage} />
+                  )}
 
-                {message.response.stage === 'complete' && (
-                  <SuccessCard message={message.response.finalMessage} />
-                )}
+                  {message.response.stage === 'billing' && (
+                    <BillingHistoryCard records={message.response.billingHistory ?? []} />
+                  )}
 
-                {message.response.stage === 'billing' && (
-                  <BillingHistoryCard records={message.response.billingHistory ?? []} />
-                )}
+                  {message.response.stage === 'plans' && message.response.availablePlans && (
+                    <div className={styles.planGrid}>
+                      {message.response.availablePlans.map((plan) => (
+                        <div
+                          key={plan.id}
+                          className={`${styles.planCard} ${
+                            plan.recommended ? styles.planCardRecommended : ''
+                          }`}
+                        >
+                          {plan.recommended && <span className={styles.recommendedTag}>Recommended</span>}
+                          <h3 className={styles.planName}>{plan.name}</h3>
+                          <p className={styles.planPrice}>${plan.price.toFixed(2)}/mo</p>
+                          <p className={styles.planSummary}>
+                            {plan.dataGB === -1 ? 'Unlimited data' : `${plan.dataGB}GB data`} ·{' '}
+                            {plan.callMinutes === -1 ? 'Unlimited calls' : `${plan.callMinutes} minutes`}
+                          </p>
+                          <ul className={styles.planFeatures}>
+                            {plan.features.map((feature) => (
+                              <li key={feature}>{feature}</li>
+                            ))}
+                          </ul>
+                        </div>
+                      ))}
+                    </div>
+                  )}
 
-                {message.response.stage === 'plans' && message.response.availablePlans && (
-                  <div className={styles.planGrid}>
-                    {message.response.availablePlans.map((plan) => (
-                      <div
-                        key={plan.id}
-                        className={`${styles.planCard} ${
-                          plan.recommended ? styles.planCardRecommended : ''
-                        }`}
-                      >
-                        {plan.recommended && <span className={styles.recommendedTag}>Recommended</span>}
-                        <h3 className={styles.planName}>{plan.name}</h3>
-                        <p className={styles.planPrice}>${plan.price.toFixed(2)}/mo</p>
-                        <p className={styles.planSummary}>
-                          {plan.dataGB === -1 ? 'Unlimited data' : `${plan.dataGB}GB data`} ·{' '}
-                          {plan.callMinutes === -1 ? 'Unlimited calls' : `${plan.callMinutes} minutes`}
-                        </p>
-                        <ul className={styles.planFeatures}>
-                          {plan.features.map((feature) => (
-                            <li key={feature}>{feature}</li>
-                          ))}
-                        </ul>
-                      </div>
-                    ))}
-                  </div>
-                )}
+                  {message.response.stage === 'recharge-options' && message.response.rechargeOptions && (
+                    <div className={styles.planGrid}>
+                      {message.response.rechargeOptions.map((plan) => (
+                        <div
+                          key={plan.id}
+                          className={`${styles.planCard} ${
+                            plan.recommended ? styles.planCardRecommended : ''
+                          }`}
+                        >
+                          {plan.recommended && <span className={styles.recommendedTag}>Recommended</span>}
+                          <h3 className={styles.planName}>{plan.name}</h3>
+                          <p className={styles.planPrice}>${plan.price.toFixed(2)}/mo</p>
+                          <p className={styles.planSummary}>
+                            {plan.dataGB === -1 ? 'Unlimited data' : `${plan.dataGB}GB data`} ·{' '}
+                            {plan.callMinutes === -1 ? 'Unlimited calls' : `${plan.callMinutes} minutes`}
+                          </p>
+                          <ul className={styles.planFeatures}>
+                            {plan.features.map((feature) => (
+                              <li key={feature}>{feature}</li>
+                            ))}
+                          </ul>
+                        </div>
+                      ))}
+                    </div>
+                  )}
 
-                {message.response.stage === 'recharge-options' && message.response.rechargeOptions && (
-                  <div className={styles.planGrid}>
-                    {message.response.rechargeOptions.map((plan) => (
-                      <div
-                        key={plan.id}
-                        className={`${styles.planCard} ${
-                          plan.recommended ? styles.planCardRecommended : ''
-                        }`}
-                      >
-                        {plan.recommended && <span className={styles.recommendedTag}>Recommended</span>}
-                        <h3 className={styles.planName}>{plan.name}</h3>
-                        <p className={styles.planPrice}>${plan.price.toFixed(2)}/mo</p>
-                        <p className={styles.planSummary}>
-                          {plan.dataGB === -1 ? 'Unlimited data' : `${plan.dataGB}GB data`} ·{' '}
-                          {plan.callMinutes === -1 ? 'Unlimited calls' : `${plan.callMinutes} minutes`}
-                        </p>
-                        <ul className={styles.planFeatures}>
-                          {plan.features.map((feature) => (
-                            <li key={feature}>{feature}</li>
-                          ))}
-                        </ul>
-                      </div>
-                    ))}
-                  </div>
-                )}
+                  {message.response.stage === 'roaming-packages' && message.response.roamingPackages && (
+                    <div className={styles.planGrid}>
+                      {message.response.roamingPackages.map((pkg) => (
+                        <div
+                          key={pkg.id}
+                          className={`${styles.planCard} ${
+                            pkg.recommended ? styles.planCardRecommended : ''
+                          }`}
+                        >
+                          {pkg.recommended && <span className={styles.recommendedTag}>Recommended</span>}
+                          <h3 className={styles.planName}>{pkg.name}</h3>
+                          <p className={styles.planPrice}>${pkg.price.toFixed(2)}</p>
+                          <p className={styles.planSummary}>
+                            {pkg.dataGB}GB data · {pkg.days} days
+                          </p>
+                          <p className={styles.planSummary}>
+                            Countries: {pkg.countries.join(', ')}
+                          </p>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          ))}
 
-                {message.response.stage === 'roaming-packages' && message.response.roamingPackages && (
-                  <div className={styles.planGrid}>
-                    {message.response.roamingPackages.map((pkg) => (
-                      <div
-                        key={pkg.id}
-                        className={`${styles.planCard} ${
-                          pkg.recommended ? styles.planCardRecommended : ''
-                        }`}
-                      >
-                        {pkg.recommended && <span className={styles.recommendedTag}>Recommended</span>}
-                        <h3 className={styles.planName}>{pkg.name}</h3>
-                        <p className={styles.planPrice}>${pkg.price.toFixed(2)}</p>
-                        <p className={styles.planSummary}>
-                          {pkg.dataGB}GB data · {pkg.days} days
-                        </p>
-                        <p className={styles.planSummary}>
-                          Countries: {pkg.countries.join(', ')}
-                        </p>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-            )}
-          </div>
-        ))}
-
-        {loading && <LoadingSpinner />}
-      </div>
-
-      {error && <ErrorMessage message={error} />}
-
-      <form className={styles.inputBar} onSubmit={handleSend}>
-        <div className={styles.inputWrapper}>
-          <input
-            className={styles.input}
-            value={input}
-            onChange={(e) => {
-              setInput(e.target.value);
-              if (e.target.value.trim() && listening) {
-                recognitionRef.current?.stop();
-                setListening(false);
-              }
-            }}
-            placeholder="Type or speak your message..."
-            disabled={loading}
-          />
-          <span className={styles.voiceStatus}>
-            {listening ? 'Listening...' : 'Tap the mic to talk'}
-          </span>
+          {loading && <LoadingSpinner />}
         </div>
-        <button
-          className={`${styles.voiceButton} ${listening ? styles.voiceButtonActive : ''}`}
-          type="button"
-          onClick={toggleVoiceInput}
-          disabled={loading || Boolean(input.trim())}
-          aria-label={listening ? 'Stop voice input' : 'Start voice input'}
-          title={listening ? 'Stop voice input' : 'Start voice input'}
-        >
-          {listening ? <MicOff size={18} /> : <Mic size={18} />}
-        </button>
-        <button className={styles.sendButton} type="submit" disabled={loading || !input.trim()}>
-          <Send size={18} />
-        </button>
-      </form>
+
+        {error && <ErrorMessage message={error} />}
+
+        <form className={styles.inputBar} onSubmit={handleSend}>
+          <div className={styles.inputWrapper}>
+            <input
+              className={styles.input}
+              value={input}
+              onChange={(e) => {
+                setInput(e.target.value);
+                if (e.target.value.trim() && listening) {
+                  recognitionRef.current?.stop();
+                  setListening(false);
+                }
+              }}
+              placeholder="Type or speak your message..."
+              disabled={loading}
+            />
+            <span className={styles.voiceStatus}>
+              {listening ? 'Listening...' : 'Tap the mic to talk'}
+            </span>
+          </div>
+          <button
+            className={`${styles.voiceButton} ${listening ? styles.voiceButtonActive : ''}`}
+            type="button"
+            onClick={toggleVoiceInput}
+            disabled={loading || Boolean(input.trim())}
+            aria-label={listening ? 'Stop voice input' : 'Start voice input'}
+            title={listening ? 'Stop voice input' : 'Start voice input'}
+          >
+            {listening ? <MicOff size={18} /> : <Mic size={18} />}
+          </button>
+          <button className={styles.sendButton} type="submit" disabled={loading || !input.trim()}>
+            <Send size={18} />
+          </button>
+        </form>
+      </section>
+
+      <aside className={styles.dashboardColumn}>
+        <div className={styles.dashboardHeader}>
+          <div>
+            <h2 className={styles.dashboardTitle}>Live Agent Dashboard</h2>
+            <p className={styles.dashboardSubtitle}>Request traces from your current chat session</p>
+          </div>
+          <div className={styles.dashboardActions}>
+            <span className={styles.dashboardCount}>{mergedHistory.length}</span>
+            <button
+              type="button"
+              className={styles.dashboardClearButton}
+              onClick={handleClearDashboard}
+              disabled={clearingHistory || historyLoading}
+            >
+              {clearingHistory ? 'Clearing...' : 'Clear'}
+            </button>
+          </div>
+        </div>
+
+        {historyLoading && <LoadingSpinner />}
+
+        {historyError && (
+          <div className={styles.dashboardError}>
+            <AlertCircle size={16} />
+            <span>{historyError}</span>
+          </div>
+        )}
+
+        {!historyLoading && orderedHistory.length === 0 && (
+          <div className={styles.dashboardEmpty}>No agent traces yet. Start a conversation to populate this panel.</div>
+        )}
+
+        <div className={styles.dashboardList}>
+          {orderedHistory.map((trace, index) => {
+            const isExpanded = expandedTraceIndex === index;
+            const latestTimestamp = trace.steps[trace.steps.length - 1]?.timestamp;
+
+            return (
+              <article key={`${trace.customerId}-${trace.request}-${index}`} className={styles.dashboardCard}>
+                <button
+                  type="button"
+                  className={styles.dashboardCardButton}
+                  onClick={() => toggleTraceExpanded(index)}
+                  aria-expanded={isExpanded}
+                >
+                  <div>
+                    <h3>{trace.intent || 'General request'}</h3>
+                    <p>{trace.request}</p>
+                  </div>
+                  <div className={styles.dashboardMetaRight}>
+                    <span className={styles.dashboardBadge}>{trace.stage}</span>
+                    {isExpanded ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
+                  </div>
+                </button>
+
+                <div className={styles.dashboardMeta}>
+                  <span>
+                    <Layers3 size={14} />
+                    {trace.agents.join(' → ') || 'No agents'}
+                  </span>
+                  <span>
+                    <Clock3 size={14} />
+                    {new Date(latestTimestamp ?? Date.now()).toLocaleString()}
+                  </span>
+                </div>
+
+                {isExpanded && (
+                  <div className={styles.dashboardSteps}>
+                    {trace.steps.map((step, stepIndex) => (
+                      <div key={`${step.agent}-${step.action}-${stepIndex}`} className={styles.dashboardStep}>
+                        <Bot size={14} />
+                        <div>
+                          <strong>{step.agent}</strong>
+                          <span>{step.action}</span>
+                          <p>{step.detail}</p>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </article>
+            );
+          })}
+        </div>
+      </aside>
     </div>
   );
 }

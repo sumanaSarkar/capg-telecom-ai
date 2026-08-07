@@ -14,6 +14,8 @@ import { LLM_PROVIDER } from '../llm/llm-provider.interface';
 import { AskAction, AskDto } from './ask.dto';
 import { RecommendationService } from './recommendation.service';
 
+const MAX_FLOW_TRACES_PER_CUSTOMER = 5;
+
 export interface AgentCommunicationStep {
   agent: string;
   action: string;
@@ -184,7 +186,15 @@ export class OrchestratorService {
   }
 
   getHistory(customerId: string): AgentCommunicationTrace[] {
-    return this.communicationHistory.filter((trace) => trace.customerId === customerId);
+    return this.communicationHistory
+      .filter((trace) => trace.customerId === customerId)
+      .slice(-MAX_FLOW_TRACES_PER_CUSTOMER);
+  }
+
+  clearHistory(customerId: string): void {
+    const retained = this.communicationHistory.filter((trace) => trace.customerId !== customerId);
+    this.communicationHistory.length = 0;
+    this.communicationHistory.push(...retained);
   }
 
   private recordCommunicationTrace(dto: AskDto, response: OrchestratorResponse) {
@@ -228,6 +238,20 @@ export class OrchestratorService {
         billingHistory: response.billingHistory,
       },
     });
+
+    const customerHistoryIndexes = this.communicationHistory
+      .map((trace, index) => (trace.customerId === dto.customerId ? index : -1))
+      .filter((index) => index >= 0);
+
+    const overflowCount = customerHistoryIndexes.length - MAX_FLOW_TRACES_PER_CUSTOMER;
+    if (overflowCount <= 0) {
+      return;
+    }
+
+    for (let i = 0; i < overflowCount; i += 1) {
+      const indexToRemove = customerHistoryIndexes[i] - i;
+      this.communicationHistory.splice(indexToRemove, 1);
+    }
   }
 
   private getRequestedMonths(message: string): number | undefined {
@@ -242,6 +266,22 @@ export class OrchestratorService {
 
     const looseMatch = message.match(/\b(\d+)\s+months?\b/i);
     return looseMatch ? parseInt(looseMatch[1], 10) : undefined;
+  }
+
+  private getRequestedBillingCount(message: string): number | undefined {
+    if (/\b(?:last|past|previous)\s+bill\b/i.test(message)) {
+      return 1;
+    }
+
+    const billsMatch = message.match(
+      /\b(?:last|past|previous|show|give|fetch|get)\s+(\d+)\s+(?:bills?|invoices?|records?|statements?)\b/i,
+    );
+    if (billsMatch) {
+      return parseInt(billsMatch[1], 10);
+    }
+
+    const looseBillsMatch = message.match(/\b(\d+)\s+(?:bills?|invoices?)\b/i);
+    return looseBillsMatch ? parseInt(looseBillsMatch[1], 10) : undefined;
   }
 
   private async handleAsk(
@@ -335,18 +375,25 @@ export class OrchestratorService {
 
     if (isBillingOnly) {
       const months = this.getRequestedMonths(dto.message);
+      const billingCount = this.getRequestedBillingCount(dto.message);
       const allRecords = this.billingService.getBillingHistory(dto.customerId);
-      const billingHistory = months
-        ? this.filterRecentBilling(allRecords, months)
-        : allRecords;
+      const billingHistory = billingCount
+        ? this.filterRecentBilling(allRecords, billingCount)
+        : months
+          ? this.filterRecentBilling(allRecords, months)
+          : allRecords;
 
       const finalMessage = await this.llmProvider.generateResponse(
-        { count: billingHistory.length, months: months ?? 'all' },
-        months
-          ? months === 1
-            ? 'Here are your past {{months}} month of billing records ({{count}} found):'
-            : `Here are your past {{months}} months of billing records ({{count}} found):`
-          : `Here are your billing records ({{count}} found):`,
+        { count: billingHistory.length, months: months ?? 'all', billingCount: billingCount ?? 'all' },
+        billingCount
+          ? billingCount === 1
+            ? 'Here is your last {{billingCount}} billing record ({{count}} found):'
+            : 'Here are your last {{billingCount}} billing records ({{count}} found):'
+          : months
+            ? months === 1
+              ? 'Here are your past {{months}} month of billing records ({{count}} found):'
+              : `Here are your past {{months}} months of billing records ({{count}} found):`
+            : `Here are your billing records ({{count}} found):`,
       );
 
       return { intent, agents, finalMessage, stage: 'billing', billingHistory };

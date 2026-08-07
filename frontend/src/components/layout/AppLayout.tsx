@@ -6,7 +6,6 @@ import {
   MessageSquare,
   Radio,
   Signal,
-  SmartphoneNfc,
   User,
 } from 'lucide-react';
 import type { ReactNode } from 'react';
@@ -22,7 +21,6 @@ const NAV_ITEMS: Array<{ to: string; label: string; icon: ReactNode }> = [
   { to: '/plans', label: 'Plans', icon: <Signal size={18} /> },
   { to: '/billing', label: 'Billing', icon: <CreditCard size={18} /> },
   { to: '/roaming', label: 'Roaming', icon: <Radio size={18} /> },
-  { to: '/esim', label: 'eSIM', icon: <SmartphoneNfc size={18} /> },
   { to: '/support', label: 'Support', icon: <LifeBuoy size={18} /> },
 ];
 

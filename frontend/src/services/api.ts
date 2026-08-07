@@ -14,7 +14,27 @@ import type {
   TicketPriority,
 } from './types';
 
-const API_URL = import.meta.env.VITE_API_URL || '/api';
+function resolveApiUrl() {
+  const configuredApiUrl = import.meta.env.VITE_API_URL as string | undefined;
+
+  if (!configuredApiUrl) {
+    return '/api';
+  }
+
+  if (typeof window !== 'undefined') {
+    const isHostedUi = !['localhost', '127.0.0.1'].includes(window.location.hostname);
+    const isLocalhostApi = /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?/i.test(configuredApiUrl);
+
+    // In hosted environments (for example *.app.github.dev), calling localhost points to the user's machine.
+    if (isHostedUi && isLocalhostApi) {
+      return '/api';
+    }
+  }
+
+  return configuredApiUrl;
+}
+
+const API_URL = resolveApiUrl();
 
 export const apiClient = axios.create({
   baseURL: API_URL,
@@ -64,9 +84,13 @@ export const api = {
     });
     return data;
   },
-    getAgentCommunicationHistory: async (customerId: string): Promise<AgentCommunicationTrace[]> => {
+  getAgentCommunicationHistory: async (customerId: string): Promise<AgentCommunicationTrace[]> => {
     const { data } = await apiClient.get<AgentCommunicationTrace[]>(`/orchestrator/history/${customerId}`);
     return data;
+  },
+
+  clearAgentCommunicationHistory: async (customerId: string): Promise<void> => {
+    await apiClient.delete(`/orchestrator/history/${customerId}`);
   },
 
   getProfile: async (customerId: string): Promise<CustomerProfile> => {

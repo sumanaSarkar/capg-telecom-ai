@@ -4,7 +4,7 @@ import type { OrchestratorResponse } from '../services/types';
 import { useAuth } from './useAuth';
 
 const STORAGE_KEY_PREFIX = 'telecom-ai-chat';
-const MAX_HISTORY_MESSAGES = 100;
+const MAX_CHAT_TURNS = 5;
 
 export interface ChatMessage {
   id: string;
@@ -62,16 +62,31 @@ function readStoredMessages(customerId?: string): ChatMessage[] {
     }
 
     const parsed = JSON.parse(stored) as ChatMessage[];
-    return Array.isArray(parsed) && parsed.length > 0
-      ? parsed.slice(-MAX_HISTORY_MESSAGES)
-      : [];
+    return Array.isArray(parsed) && parsed.length > 0 ? trimMessages(parsed) : [];
   } catch {
     return [];
   }
 }
 
 function trimMessages(messages: ChatMessage[]): ChatMessage[] {
-  return messages.slice(-MAX_HISTORY_MESSAGES);
+  if (messages.length === 0) {
+    return [];
+  }
+
+  const userMessageIndexes = messages
+    .map((message, index) => (message.role === 'user' ? index : -1))
+    .filter((index) => index >= 0);
+
+  if (userMessageIndexes.length <= MAX_CHAT_TURNS) {
+    return messages;
+  }
+
+  const keepFromIndex = userMessageIndexes[userMessageIndexes.length - MAX_CHAT_TURNS];
+  const hasWelcomeMessage =
+    messages[0]?.id === 'welcome' && messages[0]?.role === 'assistant';
+  const trimmed = messages.slice(keepFromIndex);
+
+  return hasWelcomeMessage && keepFromIndex > 0 ? [messages[0], ...trimmed] : trimmed;
 }
 
 export function ChatProvider({ children }: { children: ReactNode }) {

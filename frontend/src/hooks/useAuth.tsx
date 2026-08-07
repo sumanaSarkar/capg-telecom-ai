@@ -1,4 +1,4 @@
-import { createContext, useCallback, useContext, useMemo, useState } from 'react';
+import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
 import type { ReactNode } from 'react';
 import { api } from '../services/api';
 
@@ -18,6 +18,14 @@ interface AuthContextValue {
 
 const AuthContext = createContext<AuthContextValue | undefined>(undefined);
 
+function resolveThemeFromUsername(username?: string): string {
+  const normalized = (username ?? '').trim().toLowerCase();
+  if (normalized === 'user1') return 'grey';
+  if (normalized === 'user2') return 'blue';
+  if (normalized === 'user3') return 'green';
+  return 'default';
+}
+
 function readStoredUser(): AuthUser | null {
   const raw = localStorage.getItem('user');
   if (!raw) return null;
@@ -31,6 +39,11 @@ function readStoredUser(): AuthUser | null {
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [token, setToken] = useState<string | null>(() => localStorage.getItem('token'));
   const [user, setUser] = useState<AuthUser | null>(() => readStoredUser());
+
+  useEffect(() => {
+    const theme = resolveThemeFromUsername(user?.username);
+    document.documentElement.setAttribute('data-theme', theme);
+  }, [user?.username]);
 
   const login = useCallback(async (username: string, password: string) => {
     const response = await api.login(username, password);
