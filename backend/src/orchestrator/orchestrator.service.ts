@@ -14,6 +14,32 @@ import { LLM_PROVIDER } from '../llm/llm-provider.interface';
 import { AskAction, AskDto } from './ask.dto';
 import { RecommendationService } from './recommendation.service';
 
+export interface AgentCommunicationStep {
+  agent: string;
+  action: string;
+  detail: string;
+  timestamp: string;
+}
+
+export interface AgentCommunicationTrace {
+  customerId: string;
+  request: string;
+  intent: string;
+  stage: OrchestratorStage;
+  agents: string[];
+  steps: AgentCommunicationStep[];
+  response?: {
+    finalMessage: string;
+    recommendation?: OrchestratorResponse['recommendation'];
+    availablePlans?: OrchestratorResponse['availablePlans'];
+    rechargeOptions?: OrchestratorResponse['rechargeOptions'];
+    roamingPackages?: OrchestratorResponse['roamingPackages'];
+    paymentUrl?: string;
+    paymentId?: string;
+    billingHistory?: BillingRecord[];
+  };
+}
+
 export type OrchestratorStage =
   | 'recommendation'
   | 'payment'
@@ -44,6 +70,7 @@ export interface OrchestratorResponse {
 @Injectable()
 export class OrchestratorService {
   private readonly logger = new Logger(OrchestratorService.name);
+  private readonly communicationHistory: AgentCommunicationTrace[] = [];
 
   constructor(
     @Inject(LLM_PROVIDER) private readonly llmProvider: ILlmProvider,
@@ -63,15 +90,18 @@ export class OrchestratorService {
     // Step 1: detect intent & required agents via the LLM provider.
     const { intent, agents } = await this.llmProvider.detectIntent(dto.message);
 
+    let response: OrchestratorResponse;
+
     if (action === 'confirm') {
-      return this.handleConfirm(dto, intent, agents);
+      response = await this.handleConfirm(dto, intent, agents);
+    } else if (action === 'payment_success') {
+      response = await this.handlePaymentSuccess(dto, intent, agents);
+    } else {
+      response = await this.handleAsk(dto, intent, agents);
     }
 
-    if (action === 'payment_success') {
-      return this.handlePaymentSuccess(dto, intent, agents);
-    }
-
-    return this.handleAsk(dto, intent, agents);
+    this.recordCommunicationTrace(dto, response);
+    return response;
   }
 
   private filterRecentBilling(records: BillingRecord[], months: number): BillingRecord[] {
@@ -150,6 +180,53 @@ export class OrchestratorService {
     return plans.find((plan) => {
       const planTokens = this.normalizeText(plan.name).split(' ').filter(Boolean);
       return planTokens.length > 0 && planTokens.every((token) => normalizedMessage.includes(token));
+    });
+  }
+
+  getHistory(customerId: string): AgentCommunicationTrace[] {
+    return this.communicationHistory.filter((trace) => trace.customerId === customerId);
+  }
+
+  private recordCommunicationTrace(dto: AskDto, response: OrchestratorResponse) {
+    const timestamp = new Date().toISOString();
+    const steps: AgentCommunicationStep[] = [
+      {
+        agent: 'Orchestrator',
+        action: 'Intent detected',
+        detail: `Detected intent "${response.intent}" and selected agents: ${response.agents.join(', ') || 'none'}.`,
+        timestamp,
+      },
+      ...response.agents.map((agent) => ({
+        agent,
+        action: 'Agent engaged',
+        detail: `Agent ${agent} handled the request.`,
+        timestamp,
+      })),
+      {
+        agent: 'LLM',
+        action: 'Generated response',
+        detail: 'LLM generated the final assistant response.',
+        timestamp,
+      },
+    ];
+
+    this.communicationHistory.push({
+      customerId: dto.customerId,
+      request: dto.message,
+      intent: response.intent,
+      stage: response.stage,
+      agents: response.agents,
+      steps,
+      response: {
+        finalMessage: response.finalMessage,
+        recommendation: response.recommendation,
+        availablePlans: response.availablePlans,
+        rechargeOptions: response.rechargeOptions,
+        roamingPackages: response.roamingPackages,
+        paymentUrl: response.paymentUrl,
+        paymentId: response.paymentId,
+        billingHistory: response.billingHistory,
+      },
     });
   }
 

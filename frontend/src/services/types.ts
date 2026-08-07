@@ -110,6 +110,7 @@ export interface OrchestratorResponse {
   stage: OrchestratorStage;
   billingHistory?: BillingRecord[];
   context?: Record<string, unknown>;
+  communicationTrace?: AgentCommunicationTrace;
 }
 
 export interface LoginResponse {
@@ -119,4 +120,20 @@ export interface LoginResponse {
     username: string;
     customerId: string;
   };
+}
+export interface AgentCommunicationStep {
+  agent: string;
+  action: string;
+  detail: string;
+  timestamp: string;
+}
+
+export interface AgentCommunicationTrace {
+  customerId: string;
+  request: string;
+  intent: string;
+  stage: OrchestratorStage;
+  agents: string[];
+  steps: AgentCommunicationStep[];
+  response?: OrchestratorResponse;
 }

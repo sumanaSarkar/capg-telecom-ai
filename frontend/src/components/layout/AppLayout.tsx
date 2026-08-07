@@ -1,5 +1,6 @@
 import {
   BarChart3,
+  Bot,
   CreditCard,
   LifeBuoy,
   MessageSquare,
@@ -15,6 +16,7 @@ import styles from './AppLayout.module.css';
 
 const NAV_ITEMS: Array<{ to: string; label: string; icon: ReactNode }> = [
   { to: '/chat', label: 'Assistant', icon: <MessageSquare size={18} /> },
+    { to: '/dashboard', label: 'Agent Dashboard', icon: <Bot size={18} /> },
   { to: '/profile', label: 'Profile', icon: <User size={18} /> },
   { to: '/analytics', label: 'Analytics', icon: <BarChart3 size={18} /> },
   { to: '/plans', label: 'Plans', icon: <Signal size={18} /> },

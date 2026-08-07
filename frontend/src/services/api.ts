@@ -1,5 +1,6 @@
 import axios from 'axios';
 import type {
+  AgentCommunicationTrace,
   AskAction,
   BillingRecord,
   CustomerAnalytics,
@@ -61,6 +62,10 @@ export const api = {
       planId,
       paymentId,
     });
+    return data;
+  },
+    getAgentCommunicationHistory: async (customerId: string): Promise<AgentCommunicationTrace[]> => {
+    const { data } = await apiClient.get<AgentCommunicationTrace[]>(`/orchestrator/history/${customerId}`);
     return data;
   },
 

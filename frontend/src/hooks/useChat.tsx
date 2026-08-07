@@ -4,7 +4,7 @@ import type { OrchestratorResponse } from '../services/types';
 import { useAuth } from './useAuth';
 
 const STORAGE_KEY_PREFIX = 'telecom-ai-chat';
-const MAX_HISTORY_MESSAGES = 5;
+const MAX_HISTORY_MESSAGES = 100;
 
 export interface ChatMessage {
   id: string;

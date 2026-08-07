@@ -1,4 +1,4 @@
-import { Body, Controller, Post, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, Param, Post, UseGuards } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { AskDto } from './ask.dto';
@@ -10,6 +10,12 @@ import { OrchestratorService } from './orchestrator.service';
 @Controller('orchestrator')
 export class OrchestratorController {
   constructor(private readonly orchestratorService: OrchestratorService) {}
+
+  @Get('history/:customerId')
+  @ApiOperation({ summary: 'Get agent communication history for a customer' })
+  getHistory(@Param('customerId') customerId: string) {
+    return this.orchestratorService.getHistory(customerId);
+  }
 
   @Post('ask')
   @ApiOperation({

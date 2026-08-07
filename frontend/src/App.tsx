@@ -12,6 +12,7 @@ import { ProfilePage } from './pages/ProfilePage';
 import { RoamingPage } from './pages/RoamingPage';
 import { SupportPage } from './pages/SupportPage';
 import { ProtectedRoute } from './routes/ProtectedRoute';
+import { AgentDashboardPage } from './pages/AgentDashboardPage';
 
 function App() {
   return (
@@ -28,6 +29,7 @@ function App() {
         >
           <Route index element={<Navigate to="/chat" replace />} />
           <Route path="/chat" element={<ChatPage />} />
+           <Route path="/dashboard" element={<AgentDashboardPage />} />
           <Route path="/profile" element={<ProfilePage />} />
           <Route path="/analytics" element={<AnalyticsPage />} />
           <Route path="/plans" element={<PlansPage />} />
