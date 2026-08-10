@@ -102,4 +102,50 @@ export class MockLlmProvider implements ILlmProvider {
 
     return Promise.resolve(rendered);
   }
+
+  chat(messages: import('./llm-provider.interface').ConversationMessage[]): Promise<string> {
+    const userMessages = messages.filter((m) => m.role === 'user');
+    const latestUserMessage = userMessages[userMessages.length - 1]?.content?.trim() ?? '';
+    const previousAssistantReply = [...messages].reverse().find((m) => m.role === 'assistant')?.content;
+
+    if (!latestUserMessage) {
+      return Promise.resolve(
+        'I can help with plans, recharge, billing, roaming, eSIM, payments, and support. What would you like to do?',
+      );
+    }
+
+    const normalized = latestUserMessage.toLowerCase();
+
+    if (/\b(hi|hello|hey|good morning|good evening|good afternoon)\b/.test(normalized)) {
+      return Promise.resolve(
+        'Hello! I can help with your telecom account, plans, billing, recharge, roaming, and eSIM requests. What would you like to check first?',
+      );
+    }
+
+    if (/\b(thanks|thank you|thx)\b/.test(normalized)) {
+      return Promise.resolve('You are welcome. If you want, I can next help with plans, billing, recharge, or roaming.');
+    }
+
+    if (/\b(llm|ai|model|bot)\b/.test(normalized)) {
+      return Promise.resolve(
+        'Yes, this assistant uses an LLM-backed flow for conversation and telecom actions. Ask me about plans, billing, recharge, roaming, or support and I will guide you.',
+      );
+    }
+
+    if (/\b(dont|do not|never)\s+repeat\b/.test(normalized)) {
+      return Promise.resolve(
+        'Understood, I will not repeat your text. Tell me the telecom task you want, and I will reply with a direct answer.',
+      );
+    }
+
+    if (/^(why|how|what else|tell me more|more)$/i.test(normalized) && previousAssistantReply) {
+      return Promise.resolve(
+        'Sure. I can explain in more detail, or we can continue directly with a telecom task like checking billing, comparing plans, or starting a recharge.',
+      );
+    }
+
+    return Promise.resolve(
+      'I am here to help with telecom services only, such as plans, billing, recharge, roaming, eSIM, payments, and support. Please tell me what you want to do.',
+    );
+  }
 }

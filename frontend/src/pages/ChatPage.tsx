@@ -44,6 +44,46 @@ interface SpeechRecognitionErrorEventLike {
 const NON_TELECOM_BANNER_TEXT = 'I am not available for this service.';
 const MAX_FLOW_TRACES = 5;
 const FLOW_CLEAR_MARKER_PREFIX = 'telecom-ai-flow-clear-marker';
+const FLOW_NODE_COLOR_CLASSES = [
+  'flowBlockMint',
+  'flowBlockSky',
+  'flowBlockSun',
+  'flowBlockCoral',
+  'flowBlockLavender',
+  'flowBlockLime',
+] as const;
+
+const FLOW_NODE_LAYOUT = [
+  { x: 16, y: 17 },
+  { x: 46, y: 12 },
+  { x: 76, y: 18 },
+  { x: 76, y: 45 },
+  { x: 50, y: 58 },
+  { x: 24, y: 47 },
+  { x: 20, y: 76 },
+  { x: 62, y: 80 },
+] as const;
+
+interface FlowDiagramNode {
+  key: string;
+  title: string;
+  subtitle: string;
+  x: number;
+  y: number;
+  colorClass: (typeof FLOW_NODE_COLOR_CLASSES)[number];
+  order: number;
+}
+
+function buildConnectorPath(
+  from: Pick<FlowDiagramNode, 'x' | 'y'>,
+  to: Pick<FlowDiagramNode, 'x' | 'y'>,
+  index: number,
+): string {
+  const controlX = (from.x + to.x) / 2;
+  const curveOffset = index % 2 === 0 ? -10 : 10;
+  const controlY = (from.y + to.y) / 2 + curveOffset;
+  return `M ${from.x} ${from.y} Q ${controlX} ${controlY} ${to.x} ${to.y}`;
+}
 
 function getFlowClearMarkerKey(customerId: string): string {
   return `${FLOW_CLEAR_MARKER_PREFIX}:${customerId}`;
@@ -238,6 +278,34 @@ function mergeHistory(
   return deduplicated.slice(-MAX_FLOW_TRACES);
 }
 
+function shortenText(text: string, maxLength: number): string {
+  if (text.length <= maxLength) {
+    return text;
+  }
+
+  return `${text.slice(0, maxLength - 1)}...`;
+}
+
+function formatStepTimer(steps: AgentCommunicationTrace['steps'], stepIndex: number): string {
+  const fallbackSeconds = stepIndex * 0.7;
+  const first = steps[0]?.timestamp;
+  const current = steps[stepIndex]?.timestamp;
+
+  if (!first || !current) {
+    return `t+${fallbackSeconds.toFixed(1)}s`;
+  }
+
+  const firstTime = new Date(first).getTime();
+  const currentTime = new Date(current).getTime();
+
+  if (!Number.isFinite(firstTime) || !Number.isFinite(currentTime) || currentTime < firstTime) {
+    return `t+${fallbackSeconds.toFixed(1)}s`;
+  }
+
+  const elapsedSeconds = (currentTime - firstTime) / 1000;
+  return `t+${elapsedSeconds.toFixed(1)}s`;
+}
+
 export function ChatPage() {
   const { user } = useAuth();
   const { messages, setMessages, appendAssistantMessage, clearChat } = useChat();
@@ -329,6 +397,79 @@ export function ChatPage() {
   );
 
   const orderedHistory = useMemo(() => [...mergedHistory].reverse(), [mergedHistory]);
+  const activeTrace = orderedHistory[0] ?? null;
+
+  const flowNodes = useMemo(() => {
+    if (!activeTrace) {
+      return [
+        {
+          key: 'sample-request',
+          title: 'User Request',
+          subtitle: 'Example: Recommend best plan and recharge now',
+        },
+        {
+          key: 'sample-intent',
+          title: 'Intent Detected',
+          subtitle: 'Orchestrator identifies the telecom goal',
+        },
+        {
+          key: 'sample-agents',
+          title: 'Agent Fan-Out',
+          subtitle: 'Profile, Analytics, Plan agents run in parallel',
+        },
+        {
+          key: 'sample-decision',
+          title: 'Decision Step',
+          subtitle: 'Recommendation or payment step is prepared',
+        },
+        {
+          key: 'sample-reply',
+          title: 'Assistant Reply',
+          subtitle: 'Natural response with next guided action',
+        },
+      ];
+    }
+
+    const stepNodes = activeTrace.steps.slice(0, 4).map((step, index) => ({
+      key: `${step.agent}-${index}`,
+      title: `${step.agent}`,
+      subtitle: shortenText(step.action === 'Generated response' ? step.detail : step.action, 52),
+    }));
+
+    return [
+      {
+        key: 'live-request',
+        title: 'User Request',
+        subtitle: shortenText(activeTrace.request, 52),
+      },
+      ...stepNodes,
+      {
+        key: 'live-stage',
+        title: `Stage: ${activeTrace.stage}`,
+        subtitle: shortenText(activeTrace.response?.finalMessage ?? 'Response prepared', 56),
+      },
+    ];
+  }, [activeTrace]);
+
+  const diagramNodes = useMemo<FlowDiagramNode[]>(() => {
+    return flowNodes.slice(0, FLOW_NODE_LAYOUT.length).map((node, index) => ({
+      ...node,
+      ...FLOW_NODE_LAYOUT[index],
+      colorClass: FLOW_NODE_COLOR_CLASSES[index % FLOW_NODE_COLOR_CLASSES.length],
+      order: index + 1,
+    }));
+  }, [flowNodes]);
+
+  const diagramConnectors = useMemo(() => {
+    return diagramNodes.slice(0, -1).map((node, index) => {
+      const nextNode = diagramNodes[index + 1];
+      return {
+        key: `${node.key}->${nextNode.key}`,
+        path: buildConnectorPath(node, nextNode, index),
+        delayMs: index * 140 + 120,
+      };
+    });
+  }, [diagramNodes]);
 
   useEffect(() => {
     const recognitionConstructor =
@@ -536,6 +677,21 @@ export function ChatPage() {
   const isNonTelecomBanner = (response: OrchestratorResponse) =>
     response.finalMessage.startsWith(NON_TELECOM_BANNER_TEXT);
 
+  const isRechargeCompletionResponse = (response: OrchestratorResponse): boolean => {
+    if (response.stage !== 'complete') {
+      return false;
+    }
+
+    const context = response.context as
+      | {
+          recharge?: unknown;
+          billingRecord?: unknown;
+        }
+      | undefined;
+
+    return Boolean(context?.recharge && context?.billingRecord);
+  };
+
   const toggleTraceExpanded = (index: number) => {
     setExpandedTraceIndex((prev) => (prev === index ? null : index));
   };
@@ -619,7 +775,7 @@ export function ChatPage() {
                     />
                   )}
 
-                  {message.response.stage === 'complete' && (
+                  {isRechargeCompletionResponse(message.response) && (
                     <SuccessCard message={message.response.finalMessage} />
                   )}
 
@@ -751,6 +907,7 @@ export function ChatPage() {
           <div>
             <h2 className={styles.dashboardTitle}>Live Agent Dashboard</h2>
             <p className={styles.dashboardSubtitle}>Request traces from your current chat session</p>
+            <span className={styles.dashboardFlowBadge}>FLOW DIAGRAM + TIMERS ACTIVE</span>
           </div>
           <div className={styles.dashboardActions}>
             <span className={styles.dashboardCount}>{mergedHistory.length}</span>
@@ -765,6 +922,71 @@ export function ChatPage() {
           </div>
         </div>
 
+        <section className={styles.flowBoard} aria-label="Agent flow diagram">
+          <div className={styles.flowStickerOne} />
+          <div className={styles.flowStickerTwo} />
+          <div className={styles.flowStickerThree} />
+          <div className={styles.flowStickerFour} />
+
+          <div className={styles.flowCanvas}>
+            <svg
+              className={styles.flowSvg}
+              viewBox="0 0 100 100"
+              preserveAspectRatio="none"
+              aria-hidden="true"
+            >
+              <defs>
+                <marker
+                  id="flow-arrow-head"
+                  viewBox="0 0 10 10"
+                  refX="9"
+                  refY="5"
+                  markerWidth="5"
+                  markerHeight="5"
+                  orient="auto-start-reverse"
+                >
+                  <path d="M 0 0 L 10 5 L 0 10 z" fill="#111827" />
+                </marker>
+              </defs>
+
+              {diagramConnectors.map((connector) => (
+                <path
+                  key={connector.key}
+                  d={connector.path}
+                  className={styles.flowConnector}
+                  style={{ animationDelay: `${connector.delayMs}ms` }}
+                  markerEnd="url(#flow-arrow-head)"
+                />
+              ))}
+            </svg>
+
+            {diagramNodes.map((node, index) => (
+              <article
+                key={node.key}
+                className={`${styles.flowBlock} ${styles[node.colorClass]}`}
+                style={{
+                  left: `${node.x}%`,
+                  top: `${node.y}%`,
+                  animationDelay: `${index * 140}ms`,
+                }}
+              >
+                <span className={styles.flowBlockNumber}>{node.order}</span>
+                <h3>{node.title}</h3>
+                <p>{node.subtitle}</p>
+              </article>
+            ))}
+
+            <span className={styles.flowSpark} />
+            <span className={styles.flowLoop} />
+          </div>
+
+          <p className={styles.flowCaption}>
+            {activeTrace
+              ? 'Live mode: each colorful block is one executed agent step from the latest request.'
+              : 'Sample mode: send a message to animate a live telecom workflow trace.'}
+          </p>
+        </section>
+
         {historyLoading && <LoadingSpinner />}
 
         {historyError && (
@@ -777,6 +999,8 @@ export function ChatPage() {
         {!historyLoading && orderedHistory.length === 0 && (
           <div className={styles.dashboardEmpty}>No agent traces yet. Start a conversation to populate this panel.</div>
         )}
+
+        <p className={styles.traceListHeading}>Detailed Trace Cards</p>
 
         <div className={styles.dashboardList}>
           {orderedHistory.map((trace, index) => {
@@ -815,13 +1039,23 @@ export function ChatPage() {
                 {isExpanded && (
                   <div className={styles.dashboardSteps}>
                     {trace.steps.map((step, stepIndex) => (
-                      <div key={`${step.agent}-${step.action}-${stepIndex}`} className={styles.dashboardStep}>
-                        <Bot size={14} />
-                        <div>
-                          <strong>{step.agent}</strong>
-                          <span>{step.action}</span>
+                      <div key={`${step.agent}-${step.action}-${stepIndex}`} className={styles.dashboardStepSequence}>
+                        <div
+                          className={`${styles.dashboardStepBlock} ${styles[FLOW_NODE_COLOR_CLASSES[stepIndex % FLOW_NODE_COLOR_CLASSES.length]]}`}
+                          style={{ animationDelay: `${stepIndex * 140}ms` }}
+                        >
+                          <div className={styles.dashboardStepHead}>
+                            <strong>
+                              <Bot size={13} />
+                              {step.agent}
+                            </strong>
+                            <span className={styles.dashboardStepTimer}>{formatStepTimer(trace.steps, stepIndex)}</span>
+                          </div>
+                          <span className={styles.dashboardStepAction}>{step.action}</span>
                           <p>{step.detail}</p>
                         </div>
+
+                        {stepIndex < trace.steps.length - 1 && <span className={styles.dashboardStepArrow}>→</span>}
                       </div>
                     ))}
                   </div>

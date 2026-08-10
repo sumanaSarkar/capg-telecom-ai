@@ -50,6 +50,7 @@ describe('OrchestratorService', () => {
           return JSON.stringify(value);
         }),
       ),
+      chat: jest.fn().mockResolvedValue('I can help with that.'),
     };
 
     profileService = new ProfileService();
@@ -109,16 +110,79 @@ describe('OrchestratorService', () => {
     expect(result.finalMessage.toLowerCase()).not.toContain('recharge');
   });
 
-  it('returns a telecom-specific fallback for unrelated requests', async () => {
+  it('uses previous turns when answering follow-up chat prompts', async () => {
+    const chatMock = jest.fn().mockResolvedValue('I can help with that.');
+    llmProvider = {
+      detectIntent: detectIntentMock,
+      generateResponse: jest.fn().mockResolvedValue(''),
+      chat: chatMock,
+    };
+    orchestrator = new OrchestratorService(
+      llmProvider,
+      profileService,
+      analyticsService,
+      planService,
+      paymentService,
+      rechargeService,
+      roamingService,
+      billingService,
+      new RecommendationService(),
+    );
+
+    await orchestrator.ask({
+      message: 'Hello there',
+      customerId: 'cust-001',
+    });
+
+    await orchestrator.ask({
+      message: 'What about that?',
+      customerId: 'cust-001',
+    });
+
+    expect(chatMock).toHaveBeenLastCalledWith(
+      expect.arrayContaining([
+        { role: 'user', content: 'Hello there' },
+        { role: 'assistant', content: 'I can help with that.' },
+        { role: 'user', content: 'What about that?' },
+      ]),
+    );
+  });
+
+  it('uses conversational chat for unrelated requests', async () => {
     const result = await orchestrator.ask({
       message: 'pasta recipe',
       customerId: 'cust-001',
     });
 
     expect(result.stage).toBe('complete');
-    expect(result.finalMessage).toBe(
-      'I am not available for this service. Please ask about telecom plans, billing, roaming, eSIM, or support.',
-    );
+    expect(result.finalMessage).toBe('I can help with that.');
+  });
+
+  it('keeps actionable telecom follow-ups out of generic chat fallback', async () => {
+    await orchestrator.ask({
+      message: 'pasta recipe',
+      customerId: 'cust-001',
+    });
+
+    const result = await orchestrator.ask({
+      message: 'in telecom can u manage my payment and recharge on regular intervals',
+      customerId: 'cust-001',
+    });
+
+    expect(result.stage).toBe('complete');
+    expect(result.finalMessage.toLowerCase()).toContain('automatic recurring recharge/payment scheduling is not available');
+    expect(llmProvider.chat).toHaveBeenCalledTimes(1);
+  });
+
+  it('responds clearly to recurring payment or recharge requests', async () => {
+    const result = await orchestrator.ask({
+      message: 'Can you schedule my recharge every month with auto payment?',
+      customerId: 'cust-001',
+    });
+
+    expect(result.stage).toBe('complete');
+    expect(result.finalMessage.toLowerCase()).toContain('one-time payments and recharges');
+    expect(result.finalMessage.toLowerCase()).toContain('not available in this demo yet');
   });
 
   it('returns all available plans when the user asks for available plans', async () => {

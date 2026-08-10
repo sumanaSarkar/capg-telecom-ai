@@ -1,0 +1,258 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>CAPG Telecom AI - Architecture Diagram</title>
+  <style>
+    :root {
+      --bg: #f2efe9;
+      --panel: #fffdf8;
+      --ink: #1e293b;
+      --muted: #5b6474;
+      --line: #d9d3c5;
+      --accent: #0f766e;
+      --accent-2: #c2410c;
+      --accent-3: #0369a1;
+      --shadow: 0 10px 30px rgba(15, 23, 42, 0.08);
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      font-family: "Segoe UI", "Avenir Next", "Helvetica Neue", sans-serif;
+      color: var(--ink);
+      background:
+        radial-gradient(circle at 8% 12%, #ffe6c7 0%, transparent 30%),
+        radial-gradient(circle at 92% 82%, #d9f3ff 0%, transparent 30%),
+        linear-gradient(135deg, #f8f5ef 0%, #eee8db 100%);
+      min-height: 100vh;
+      padding: 24px;
+    }
+
+    .container {
+      max-width: 1200px;
+      margin: 0 auto;
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 18px;
+      box-shadow: var(--shadow);
+      overflow: hidden;
+      animation: rise 500ms ease-out;
+    }
+
+    @keyframes rise {
+      from {
+        opacity: 0;
+        transform: translateY(10px);
+      }
+      to {
+        opacity: 1;
+        transform: translateY(0);
+      }
+    }
+
+    header {
+      padding: 24px 28px 18px;
+      border-bottom: 1px solid var(--line);
+      background: linear-gradient(90deg, rgba(15, 118, 110, 0.08), rgba(3, 105, 161, 0.08));
+    }
+
+    h1 {
+      margin: 0;
+      font-size: clamp(1.3rem, 2.5vw, 2rem);
+      letter-spacing: 0.02em;
+    }
+
+    p {
+      margin: 8px 0 0;
+      color: var(--muted);
+      line-height: 1.5;
+    }
+
+    .content {
+      padding: 18px;
+    }
+
+    .legend {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+      gap: 10px;
+      margin: 0 0 16px;
+      padding: 0;
+      list-style: none;
+    }
+
+    .legend li {
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      padding: 10px 12px;
+      font-size: 0.92rem;
+      background: #fff;
+    }
+
+    .swatch {
+      display: inline-block;
+      width: 12px;
+      height: 12px;
+      border-radius: 3px;
+      margin-right: 8px;
+      vertical-align: -1px;
+    }
+
+    .s-client { background: #fde68a; }
+    .s-ui { background: #bfdbfe; }
+    .s-api { background: #bbf7d0; }
+    .s-core { background: #fecaca; }
+    .s-ext { background: #ddd6fe; }
+
+    .diagram-wrap {
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      padding: 14px;
+      background: #fff;
+      overflow-x: auto;
+    }
+
+    .mermaid {
+      min-width: 950px;
+    }
+
+    footer {
+      border-top: 1px solid var(--line);
+      padding: 12px 18px;
+      font-size: 0.85rem;
+      color: var(--muted);
+      background: #fcfaf5;
+    }
+
+    code {
+      background: #f1eee5;
+      padding: 1px 6px;
+      border-radius: 4px;
+    }
+
+    @media (max-width: 700px) {
+      body {
+        padding: 12px;
+      }
+
+      .content {
+        padding: 12px;
+      }
+
+      .diagram-wrap {
+        padding: 8px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <header>
+      <h1>CAPG Telecom AI - Application Architecture</h1>
+      <p>Full-stack telecom self-care platform with React frontend, NestJS backend, orchestrator workflow, and domain-specific service agents.</p>
+    </header>
+
+    <div class="content">
+      <ul class="legend">
+        <li><span class="swatch s-client"></span>Customer and Browser</li>
+        <li><span class="swatch s-ui"></span>Frontend (React + Vite)</li>
+        <li><span class="swatch s-api"></span>Backend API (NestJS)</li>
+        <li><span class="swatch s-core"></span>Core Workflow (Orchestrator)</li>
+        <li><span class="swatch s-ext"></span>Domain Agents and LLM Provider</li>
+      </ul>
+
+      <div class="diagram-wrap">
+        <div class="mermaid">
+flowchart LR
+    U[Customer User]:::client --> B[Browser]:::client
+
+    subgraph FE[Frontend - React + Vite]
+      direction TB
+      UI[Chat + Dashboard Pages]:::ui
+      HOOKS[useAuth, useApi, useChat hooks]:::ui
+      ROUTES[Protected Routes + JWT storage]:::ui
+      UI --> HOOKS --> ROUTES
+    end
+
+    B --> UI
+    ROUTES -->|HTTP /api| GW
+
+    subgraph BE[Backend - NestJS]
+      direction TB
+      GW[API Controllers]:::api
+      AUTH[Auth Module\nLogin + JWT Guard]:::api
+      ORCH[Orchestrator Service]:::core
+      REC[Recommendation Service]:::core
+      LLM[LLM Provider\nMock or OpenAI]:::ext
+
+      GW --> AUTH
+      GW --> ORCH
+      ORCH --> LLM
+      ORCH --> REC
+
+      subgraph AG[Domain Agent Modules]
+        direction LR
+        PROFILE[Profile]:::ext
+        ANALYTICS[Analytics]:::ext
+        PLAN[Plan]:::ext
+        BILLING[Billing]:::ext
+        RECHARGE[Recharge]:::ext
+        PAYMENT[Payment]:::ext
+        ROAMING[Roaming]:::ext
+        ESIM[eSIM]:::ext
+        SUPPORT[Support]:::ext
+      end
+
+      ORCH --> PROFILE
+      ORCH --> ANALYTICS
+      ORCH --> PLAN
+      ORCH --> PAYMENT
+      ORCH --> RECHARGE
+      ORCH --> BILLING
+      GW --> ROAMING
+      GW --> ESIM
+      GW --> SUPPORT
+    end
+
+    REC -->|best plan| ORCH
+    ORCH -->|stage: recommendation| UI
+    UI -->|confirm plan| ORCH
+    ORCH -->|stage: payment| UI
+    UI -->|payment success| ORCH
+    ORCH -->|stage: complete| UI
+
+    classDef client fill:#fde68a,stroke:#d97706,stroke-width:1.2px,color:#3f2a00;
+    classDef ui fill:#bfdbfe,stroke:#1d4ed8,stroke-width:1.2px,color:#102a54;
+    classDef api fill:#bbf7d0,stroke:#15803d,stroke-width:1.2px,color:#10351f;
+    classDef core fill:#fecaca,stroke:#b91c1c,stroke-width:1.2px,color:#4b1111;
+    classDef ext fill:#ddd6fe,stroke:#6d28d9,stroke-width:1.2px,color:#2b1762;
+        </div>
+      </div>
+    </div>
+
+    <footer>
+      View in browser from project root: <code>$BROWSER architecture-diagram.html</code>
+    </footer>
+  </div>
+
+  <script type="module">
+    import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+    mermaid.initialize({
+      startOnLoad: true,
+      theme: "base",
+      securityLevel: "loose",
+      fontFamily: "Segoe UI, Avenir Next, Helvetica Neue, sans-serif",
+      themeVariables: {
+        lineColor: "#334155",
+        textColor: "#0f172a",
+        primaryTextColor: "#0f172a"
+      }
+    });
+  </script>
+</body>
+</html>

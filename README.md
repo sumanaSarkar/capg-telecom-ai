@@ -1,4 +1,4 @@
-# Telecom AI Self-Care Platform
+`# Telecom AI Self-Care Platform
 
 An original, full-stack reference implementation of an AI-driven telecom
 self-care experience. A customer chats with an AI assistant that orchestrates

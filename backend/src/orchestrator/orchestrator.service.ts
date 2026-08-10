@@ -9,7 +9,7 @@ import { ProfileService } from '../agents/profile/profile.service';
 import { RechargeService } from '../agents/recharge/recharge.service';
 import { RoamingPackage } from '../agents/roaming/roaming.model';
 import { RoamingService } from '../agents/roaming/roaming.service';
-import type { ILlmProvider } from '../llm/llm-provider.interface';
+import type { ConversationMessage, ILlmProvider } from '../llm/llm-provider.interface';
 import { LLM_PROVIDER } from '../llm/llm-provider.interface';
 import { AskAction, AskDto } from './ask.dto';
 import { RecommendationService } from './recommendation.service';
@@ -73,6 +73,7 @@ export interface OrchestratorResponse {
 export class OrchestratorService {
   private readonly logger = new Logger(OrchestratorService.name);
   private readonly communicationHistory: AgentCommunicationTrace[] = [];
+  private readonly conversationHistoryByCustomer = new Map<string, ConversationMessage[]>();
 
   constructor(
     @Inject(LLM_PROVIDER) private readonly llmProvider: ILlmProvider,
@@ -167,6 +168,20 @@ export class OrchestratorService {
     return telecomTerms.some((term) => normalized.includes(term));
   }
 
+  private isFollowUpConversationRequest(message: string): boolean {
+    return /\b(what about|how about|tell me more|more about|can you|can u|could you|help me|what else|why|any updates|what happened|go on|continue)\b/i.test(message);
+  }
+
+  private isActionableTelecomRequest(message: string): boolean {
+    return /\b(show|list|compare|recommend|suggest|recharge|top\s*up|pay|payment|billing|bill|invoice|history|plan|roaming|esim|activate|deactivate|support|ticket|profile|account|usage|manage|schedule|regular|interval|monthly|weekly|autopay|auto\s*debit)\b/i.test(message);
+  }
+
+  private isRecurringPaymentOrRechargeRequest(message: string): boolean {
+    const referencesPaymentOrRecharge = /\b(payment|pay|recharge|top\s*up)\b/i.test(message);
+    const referencesRecurring = /\b(recurring|regular|schedule|scheduled|interval|monthly|weekly|autopay|auto\s*debit|automatic)\b/i.test(message);
+    return referencesPaymentOrRecharge && referencesRecurring;
+  }
+
   private normalizeText(value: string): string {
     return value
       .toLowerCase()
@@ -195,6 +210,19 @@ export class OrchestratorService {
     const retained = this.communicationHistory.filter((trace) => trace.customerId !== customerId);
     this.communicationHistory.length = 0;
     this.communicationHistory.push(...retained);
+    this.conversationHistoryByCustomer.delete(customerId);
+  }
+
+  private appendConversationTurn(customerId: string, message: ConversationMessage): void {
+    const history = this.conversationHistoryByCustomer.get(customerId) ?? [];
+    const nextHistory = [...history, message];
+    const trimmed = nextHistory.slice(-12);
+    this.conversationHistoryByCustomer.set(customerId, trimmed);
+  }
+
+  private getConversationMessages(customerId: string, latestMessage: string): ConversationMessage[] {
+    const history = this.conversationHistoryByCustomer.get(customerId) ?? [];
+    return [...history, { role: 'user', content: latestMessage }];
   }
 
   private recordCommunicationTrace(dto: AskDto, response: OrchestratorResponse) {
@@ -289,14 +317,21 @@ export class OrchestratorService {
     intent: string,
     agents: string[],
   ): Promise<OrchestratorResponse> {
-    if (!this.isTelecomRelatedRequest(dto.message)) {
-      return {
-        intent,
-        agents,
-        finalMessage:
-          'I am not available for this service. Please ask about telecom plans, billing, roaming, eSIM, or support.',
-        stage: 'complete',
-      };
+    const hasExistingConversation = (this.conversationHistoryByCustomer.get(dto.customerId) ?? []).length > 0;
+    const isTelecomRelated = this.isTelecomRelatedRequest(dto.message);
+    const isFollowUp = this.isFollowUpConversationRequest(dto.message);
+    const isActionableTelecom = this.isActionableTelecomRequest(dto.message);
+    const shouldUseConversationChat =
+      !isTelecomRelated ||
+      (hasExistingConversation && isFollowUp && !isActionableTelecom);
+
+    if (shouldUseConversationChat) {
+      const finalMessage = await this.llmProvider.chat(
+        this.getConversationMessages(dto.customerId, dto.message),
+      );
+      this.appendConversationTurn(dto.customerId, { role: 'user', content: dto.message });
+      this.appendConversationTurn(dto.customerId, { role: 'assistant', content: finalMessage });
+      return { intent, agents, finalMessage, stage: 'complete' };
     }
 
     if (this.isCurrentPlanRequest(dto.message)) {
@@ -306,6 +341,9 @@ export class OrchestratorService {
       const finalMessage = currentPlan
         ? `Your current plan is ${currentPlan.name} at $${currentPlan.price.toFixed(2)}/mo. If you want to compare options, I can show all available plans.`
         : `Your current plan is ${profile.plan}. If you want to compare options, I can show all available plans.`;
+
+      this.appendConversationTurn(dto.customerId, { role: 'user', content: dto.message });
+      this.appendConversationTurn(dto.customerId, { role: 'assistant', content: finalMessage });
 
       return {
         intent,
@@ -319,12 +357,32 @@ export class OrchestratorService {
       };
     }
 
+    if (this.isRecurringPaymentOrRechargeRequest(dto.message)) {
+      const finalMessage = await this.llmProvider.generateResponse(
+        {},
+        'I can help you make one-time payments and recharges whenever you ask, but automatic recurring recharge/payment scheduling is not available in this demo yet. If you want, I can start a recharge now.',
+      );
+
+      this.appendConversationTurn(dto.customerId, { role: 'user', content: dto.message });
+      this.appendConversationTurn(dto.customerId, { role: 'assistant', content: finalMessage });
+
+      return {
+        intent,
+        agents,
+        finalMessage,
+        stage: 'complete',
+      };
+    }
+
     if (this.isAvailablePlansRequest(dto.message)) {
       const availablePlans = this.planService.getPlans(dto.customerId);
       const finalMessage = await this.llmProvider.generateResponse(
         { count: availablePlans.length },
         'Here are all {{count}} available plans:',
       );
+
+      this.appendConversationTurn(dto.customerId, { role: 'user', content: dto.message });
+      this.appendConversationTurn(dto.customerId, { role: 'assistant', content: finalMessage });
 
       return {
         intent,
@@ -342,6 +400,9 @@ export class OrchestratorService {
         'Here are all {{count}} available recharge options:',
       );
 
+      this.appendConversationTurn(dto.customerId, { role: 'user', content: dto.message });
+      this.appendConversationTurn(dto.customerId, { role: 'assistant', content: finalMessage });
+
       return {
         intent,
         agents,
@@ -357,6 +418,9 @@ export class OrchestratorService {
         { count: roamingPackages.length },
         'Here are all {{count}} available roaming packages for your account:',
       );
+
+      this.appendConversationTurn(dto.customerId, { role: 'user', content: dto.message });
+      this.appendConversationTurn(dto.customerId, { role: 'assistant', content: finalMessage });
 
       return {
         intent,
@@ -396,6 +460,9 @@ export class OrchestratorService {
             : `Here are your billing records ({{count}} found):`,
       );
 
+      this.appendConversationTurn(dto.customerId, { role: 'user', content: dto.message });
+      this.appendConversationTurn(dto.customerId, { role: 'assistant', content: finalMessage });
+
       return { intent, agents, finalMessage, stage: 'billing', billingHistory };
     }
 
@@ -433,6 +500,9 @@ export class OrchestratorService {
       { planName: bestPlan.name, planPrice: bestPlan.price },
       'I recommend the {{planName}} plan at ${{planPrice}}/mo. Would you like to proceed with this plan?',
     );
+
+    this.appendConversationTurn(dto.customerId, { role: 'user', content: dto.message });
+    this.appendConversationTurn(dto.customerId, { role: 'assistant', content: finalMessage });
 
     return {
       intent,
