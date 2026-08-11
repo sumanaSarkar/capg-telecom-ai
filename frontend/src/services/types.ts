@@ -30,6 +30,13 @@ export interface CustomerAnalytics {
   monthlyTrend: MonthlyTrendEntry[];
 }
 
+export interface CustomPlanComponent {
+  name: string;
+  description: string;
+  monthlyPrice: number;
+  tag: string;
+}
+
 export interface Plan {
   id: string;
   name: string;
@@ -38,6 +45,12 @@ export interface Plan {
   price: number;
   features: string[];
   recommended: boolean;
+  // custom composed plan extras
+  isCustom?: boolean;
+  components?: CustomPlanComponent[];
+  discountNote?: string;
+  exclusiveBadge?: string;
+  estimatedSavings?: number;
 }
 
 export interface BillingRecord {
@@ -76,10 +89,11 @@ export interface SupportTicket {
   createdAt: string;
 }
 
-export type AskAction = 'ask' | 'confirm' | 'payment_success';
+export type AskAction = 'ask' | 'confirm' | 'payment_success' | 'autopilot_enable' | 'autopilot_disable';
 export type OrchestratorStage =
   | 'recommendation'
   | 'payment'
+  | 'bill-payment'
   | 'complete'
   | 'billing'
   | 'plans'
@@ -109,8 +123,18 @@ export interface OrchestratorResponse {
   finalMessage: string;
   stage: OrchestratorStage;
   billingHistory?: BillingRecord[];
+  autopilot?: { enabled: boolean; action?: string };
   context?: Record<string, unknown>;
   communicationTrace?: AgentCommunicationTrace;
+}
+
+export interface AutopilotSettings {
+  customerId: string;
+  enabled: boolean;
+  autoPayBills: boolean;
+  autoRecharge: boolean;
+  enabledAt?: string;
+  disabledAt?: string;
 }
 
 export interface LoginResponse {

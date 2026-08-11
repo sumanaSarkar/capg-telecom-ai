@@ -6,8 +6,12 @@ import { ProfileService } from '../agents/profile/profile.service';
 import { RechargeService } from '../agents/recharge/recharge.service';
 import { RoamingService } from '../agents/roaming/roaming.service';
 import { ILlmProvider } from '../llm/llm-provider.interface';
+import { CustomerIntelligenceService } from './customer-intelligence.service';
+import { CustomPlanComposerService } from './custom-plan-composer.service';
+import { DecisionEngineService } from './decision-engine.service';
 import { OrchestratorService } from './orchestrator.service';
 import { RecommendationService } from './recommendation.service';
+import { TellyResponseTemplateService } from './telly-response-template.service';
 
 describe('OrchestratorService', () => {
   let orchestrator: OrchestratorService;
@@ -71,6 +75,11 @@ describe('OrchestratorService', () => {
       roamingService,
       billingService,
       new RecommendationService(),
+      new DecisionEngineService(),
+      new CustomerIntelligenceService(),
+      new CustomPlanComposerService(),
+      undefined as never, // AutopilotService — not needed for these unit tests
+      new TellyResponseTemplateService(),
     );
   });
 
@@ -96,7 +105,11 @@ describe('OrchestratorService', () => {
     expect(result.agents).toEqual(['profile', 'analytics', 'plan']);
     expect(result.recommendation).toBeDefined();
     expect(result.recommendation?.plan).toBeDefined();
-    expect(result.finalMessage).toContain('I recommend the Standard 20GB plan at $59.99/mo.');
+    // Telly now composes a custom plan rather than picking a static one
+    const customPlan = (result.recommendation?.plan as Record<string, unknown>);
+    expect(customPlan.isCustom).toBe(true);
+    expect(typeof customPlan.name).toBe('string');
+    expect(result.finalMessage).toContain('Personalised');
   });
 
   it('returns the current plan without a recharge prompt', async () => {
@@ -127,6 +140,7 @@ describe('OrchestratorService', () => {
       roamingService,
       billingService,
       new RecommendationService(),
+      new DecisionEngineService(),
     );
 
     await orchestrator.ask({
@@ -269,20 +283,33 @@ describe('OrchestratorService', () => {
     expect(result.finalMessage).toBe('Here are your past 1 month of billing records (1 found):');
   });
 
-  it('captures an explicitly named plan in the recharge request', async () => {
+  it('captures an explicitly named plan in the recharge request and returns a custom plan', async () => {
     const result = await orchestrator.ask({
       message: 'Recharge with premium unlimited one',
       customerId: 'cust-001',
     });
 
     expect(result.stage).toBe('recommendation');
-    expect(result.recommendation?.plan).toMatchObject({
-      name: 'Premium Unlimited',
+    const plan = result.recommendation?.plan as Record<string, unknown>;
+    expect(plan.isCustom).toBe(true);
+    expect(result.finalMessage).toContain('Personalised');
+  });
+
+  it('builds a hyper-personalised custom bundle for multi-intent telecom requests', async () => {
+    const result = await orchestrator.ask({
+      message: 'I need unlimited calls, roaming for Europe, and Netflix for my family. Please suggest a package.',
+      customerId: 'cust-001',
     });
-    expect(result.context?.selectedPlan).toMatchObject({
-      name: 'Premium Unlimited',
-    });
-    expect(result.finalMessage).toContain('Premium Unlimited');
+
+    expect(result.stage).toBe('recommendation');
+    const plan = result.recommendation?.plan as Record<string, unknown>;
+    expect(plan.isCustom).toBe(true);
+    expect(Array.isArray(plan.components)).toBe(true);
+    expect(result.context?.customPlan).toBeDefined();
+    expect(result.context?.customerIntelligence).toBeDefined();
+    // composed plan name is set by the decision engine based on detected segment
+    expect(typeof (plan.name as string)).toBe('string');
+    expect((plan.name as string).startsWith('Telly')).toBe(true);
   });
 
   it('moves to the payment stage when the user confirms a plan', async () => {

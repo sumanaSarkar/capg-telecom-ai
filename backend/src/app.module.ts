@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { AnalyticsModule } from './agents/analytics/analytics.module';
+import { AutopilotModule } from './agents/autopilot/autopilot.module';
 import { BillingModule } from './agents/billing/billing.module';
 import { EsimModule } from './agents/esim/esim.module';
 import { PaymentModule } from './agents/payment/payment.module';
@@ -27,6 +28,7 @@ import { OrchestratorModule } from './orchestrator/orchestrator.module';
     RoamingModule,
     SupportModule,
     EsimModule,
+    AutopilotModule,
     OrchestratorModule,
   ],
   controllers: [],

@@ -2,6 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import OpenAI from 'openai';
 import type { ConversationMessage, ILlmProvider, IntentResult } from './llm-provider.interface';
 import { MockLlmProvider } from './mock-llm.provider';
+import { buildTelecomAgentPrompt } from './telecom-agent-config';
 
 const AVAILABLE_AGENTS = [
   'plan', 'recharge', 'billing', 'payment', 'roaming',
@@ -18,10 +19,7 @@ Rules:
 - If the request involves plan, recharge, or analytics, always include "profile", "analytics", and "plan" agents.
 - Return ONLY valid JSON, no extra text.`;
 
-const SYSTEM_PROMPT_CHAT = `You are Telly, a friendly and helpful telecom customer assistant.
-Keep responses concise (1-3 sentences), warm, and professional.
-Focus only on telecom-related topics: plans, billing, recharge, roaming, eSIM, payments, and account support.
-If asked about something unrelated, politely redirect to telecom services.`;
+const SYSTEM_PROMPT_CHAT = buildTelecomAgentPrompt();
 
 @Injectable()
 export class OpenAiLlmProvider implements ILlmProvider {

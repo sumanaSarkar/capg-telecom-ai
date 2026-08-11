@@ -532,6 +532,50 @@
   margin-top: 0.25rem;
 }
 
+.headerActions {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+}
+
+.autopilotButton {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  border: none;
+  border-radius: 999px;
+  padding: 0.55rem 0.9rem;
+  font-size: 0.8rem;
+  font-weight: 700;
+  cursor: pointer;
+  transition: background 0.15s, box-shadow 0.15s;
+}
+
+.autopilotOn {
+  background: linear-gradient(90deg, #22c55e, #16a34a);
+  color: #fff;
+  box-shadow: 0 2px 8px rgba(22, 163, 74, 0.35);
+}
+
+.autopilotOn:hover {
+  background: linear-gradient(90deg, #16a34a, #15803d);
+}
+
+.autopilotOff {
+  background: #f1f5f9;
+  color: #64748b;
+  border: 1px solid #cbd5e1;
+}
+
+.autopilotOff:hover {
+  background: #e2e8f0;
+}
+
+.autopilotButton:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
 .newChatButton {
   display: inline-flex;
   align-items: center;

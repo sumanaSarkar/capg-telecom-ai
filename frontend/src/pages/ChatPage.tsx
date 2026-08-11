@@ -1,4 +1,4 @@
-import { AlertCircle, Bot, ChevronDown, ChevronUp, Clock3, Layers3, Mic, MicOff, Send, Sparkles } from 'lucide-react';
+import { AlertCircle, Bot, ChevronDown, ChevronUp, Clock3, Layers3, Mic, MicOff, Send, Sparkles, Zap, ZapOff } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { FormEvent } from 'react';
 import axios from 'axios';
@@ -322,6 +322,8 @@ export function ChatPage() {
   const [clearingHistory, setClearingHistory] = useState(false);
   const [expandedTraceIndex, setExpandedTraceIndex] = useState<number | null>(null);
   const [flowStartMessageId, setFlowStartMessageId] = useState<string | null>(null);
+  const [autopilotEnabled, setAutopilotEnabled] = useState(false);
+  const [autopilotLoading, setAutopilotLoading] = useState(false);
   const threadRef = useRef<HTMLDivElement>(null);
   const recognitionRef = useRef<SpeechRecognitionInstance | null>(null);
   const submitMessageRef = useRef<((message: string, shouldSpeak?: boolean) => Promise<void>) | null>(null);
@@ -329,6 +331,12 @@ export function ChatPage() {
   useEffect(() => {
     threadRef.current?.scrollTo({ top: threadRef.current.scrollHeight, behavior: 'smooth' });
   }, [messages]);
+
+  useEffect(() => {
+    api.getAutopilot(customerId)
+      .then((s) => setAutopilotEnabled(s.enabled))
+      .catch(() => {});
+  }, [customerId]);
 
   useEffect(() => {
     setLocalHistory(readStoredChatHistory(customerId));
@@ -642,6 +650,27 @@ export function ChatPage() {
     }
   };
 
+  const handleToggleAutopilot = async () => {
+    setAutopilotLoading(true);
+    try {
+      if (autopilotEnabled) {
+        await api.disableAutopilot(customerId);
+        setAutopilotEnabled(false);
+        const res = await api.ask('Telly Autopilot disabled', customerId, 'autopilot_disable');
+        appendAssistantMessage(res);
+      } else {
+        await api.enableAutopilot(customerId);
+        setAutopilotEnabled(true);
+        const res = await api.ask('Telly Autopilot enabled', customerId, 'autopilot_enable');
+        appendAssistantMessage(res);
+      }
+    } catch {
+      // silently ignore toggle errors
+    } finally {
+      setAutopilotLoading(false);
+    }
+  };
+
   const handleStartNewChat = () => {
     if (recognitionRef.current && listening) {
       recognitionRef.current.stop();
@@ -700,18 +729,30 @@ export function ChatPage() {
     <div className={styles.chatPage}>
       <section className={styles.chatColumn}>
         <div className={styles.header}>
-          <div className={styles.headerTop}>
-            <div>
-              <h1 className={styles.title}>Capgemini Telecom AI Assistant</h1>
-              <p className={styles.subtitle}>
-                Ask about plans, recharges, billing, roaming, or support.
-              </p>
+            <div className={styles.headerTop}>
+              <div>
+                <h1 className={styles.title}>Capgemini Telecom AI Assistant</h1>
+                <p className={styles.subtitle}>
+                  Ask about plans, recharges, billing, roaming, or support.
+                </p>
+              </div>
+              <div className={styles.headerActions}>
+                <button
+                  className={`${styles.autopilotButton} ${autopilotEnabled ? styles.autopilotOn : styles.autopilotOff}`}
+                  type="button"
+                  onClick={handleToggleAutopilot}
+                  disabled={autopilotLoading}
+                  title={autopilotEnabled ? 'Telly Autopilot ON — click to take back control' : 'Enable Telly Autopilot'}
+                >
+                  {autopilotEnabled ? <Zap size={15} /> : <ZapOff size={15} />}
+                  {autopilotEnabled ? 'Autopilot ON' : 'Autopilot OFF'}
+                </button>
+                <button className={styles.newChatButton} type="button" onClick={handleStartNewChat}>
+                  <Sparkles size={16} />
+                  New chat
+                </button>
+              </div>
             </div>
-            <button className={styles.newChatButton} type="button" onClick={handleStartNewChat}>
-              <Sparkles size={16} />
-              New chat
-            </button>
-          </div>
         </div>
 
         <div className={styles.thread} ref={threadRef}>
@@ -759,6 +800,26 @@ export function ChatPage() {
                         disabled={message.actioned || loading}
                       />
                     )}
+
+                  {message.response.stage === 'bill-payment' && message.response.paymentUrl && (
+                    <>
+                      {message.response.billingHistory && message.response.billingHistory.length > 0 && (
+                        <BillingHistoryCard records={message.response.billingHistory} />
+                      )}
+                      <PaymentCard
+                        paymentUrl={message.response.paymentUrl}
+                        amount={(message.response.context?.pendingBill as { amount?: number } | undefined)?.amount}
+                        onComplete={() => {
+                          const paymentId = message.response?.paymentId;
+                          const bill = message.response?.context?.pendingBill as { id?: string } | undefined;
+                          if (!paymentId || !bill?.id) return;
+                          void api.ask('Bill payment confirmed', customerId, 'payment_success', bill.id, paymentId)
+                            .then((res) => { appendAssistantMessage(res); setMessages((prev) => prev.map((m) => m.id === message.id ? { ...m, actioned: true } : m)); });
+                        }}
+                        disabled={message.actioned || loading}
+                      />
+                    </>
+                  )}
 
                   {message.response.stage === 'payment' && message.response.paymentUrl && (
                     <PaymentCard

@@ -1,5 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ILlmProvider, IntentResult } from './llm-provider.interface';
+import { buildTelecomAgentPrompt, TELECOM_SERVICE_CATALOG } from './telecom-agent-config';
 
 interface KeywordMapping {
   keyword: string;
@@ -17,6 +18,9 @@ const KEYWORD_AGENT_MAP: KeywordMapping[] = [
   { keyword: 'support', agent: 'support' },
   { keyword: 'ticket', agent: 'support' },
   { keyword: 'roaming', agent: 'roaming' },
+  { keyword: 'travel', agent: 'roaming' },
+  { keyword: 'international', agent: 'roaming' },
+  { keyword: 'abroad', agent: 'roaming' },
   { keyword: 'esim', agent: 'esim' },
   { keyword: 'sim', agent: 'esim' },
   { keyword: 'profile', agent: 'profile' },
@@ -51,7 +55,8 @@ export class MockLlmProvider implements ILlmProvider {
     if (
       matchedAgents.has('plan') ||
       matchedAgents.has('recharge') ||
-      matchedAgents.has('analytics')
+      matchedAgents.has('analytics') ||
+      matchedAgents.has('roaming')
     ) {
       matchedAgents.add('profile');
       matchedAgents.add('analytics');
@@ -128,7 +133,16 @@ export class MockLlmProvider implements ILlmProvider {
 
     if (/\b(llm|ai|model|bot)\b/.test(normalized)) {
       return Promise.resolve(
-        'Yes, this assistant uses an LLM-backed flow for conversation and telecom actions. Ask me about plans, billing, recharge, roaming, or support and I will guide you.',
+        'Yes, I am Telly, your telecom advisor. I can personalize a plan, suggest unlimited calls, roaming, OTT bundles such as Netflix, and guide you to the best offer.',
+      );
+    }
+
+    if (/\b(plan|bundle|recommend|custom|ott|netflix|roaming|unlimited calls|unlimited call)\b/.test(normalized)) {
+      const catalogPreview = TELECOM_SERVICE_CATALOG.slice(0, 4)
+        .map((item) => `${item.name} (${item.price})`)
+        .join(', ');
+      return Promise.resolve(
+        `I can build a hyper-personalized bundle for you. For example, I can combine options like ${catalogPreview} and tailor the offer to your usage, travel, and entertainment needs.`,
       );
     }
 
@@ -145,7 +159,7 @@ export class MockLlmProvider implements ILlmProvider {
     }
 
     return Promise.resolve(
-      'I am here to help with telecom services only, such as plans, billing, recharge, roaming, eSIM, payments, and support. Please tell me what you want to do.',
+      `${buildTelecomAgentPrompt().split('\n')[0]} I can help you with a tailored plan, add-ons such as unlimited calls, roaming, Netflix/OTT bundles, and premium support. What do you need today?`,
     );
   }
 }

@@ -109,6 +109,38 @@ sequenceDiagram
     FE-->>U: Show SuccessCard
 ```
 
+## Telly telecom agent configuration
+
+The backend now includes a richer telecom-agent prompt for Telly so it can act as a sales-oriented assistant rather than a simple keyword router. The configuration lives in [backend/src/llm/telecom-agent-config.ts](backend/src/llm/telecom-agent-config.ts) and defines:
+
+- a persona prompt for Telly with sales, personalization, and upsell behavior
+- a service catalog covering plan tiers, add-ons, and benefits such as unlimited calls, roaming, OTT bundles, hotspot, and premium support
+- guidance for building hyper-personalized bundles based on customer needs, travel, entertainment, and budget
+
+### How to configure it
+
+1. Set the backend LLM provider:
+   - `LLM_PROVIDER=mock` for local development with the built-in prompt logic
+   - `LLM_PROVIDER=openai` with `OPENAI_API_KEY=<your-key>` to use the OpenAI-backed provider
+2. Expand the catalog in [backend/src/llm/telecom-agent-config.ts](backend/src/llm/telecom-agent-config.ts) with real product names, prices, and service tags.
+3. Keep the prompt aligned with your business goals:
+   - prioritize discovery questions
+   - recommend bundles that combine base plans with add-ons
+   - highlight conversion-oriented offers such as unlimited voice, roaming, OTT, and support upgrades
+
+### Recommended product data to include
+
+For a more robust deployment, add entries for:
+
+- base plans with data, voice, and price
+- unlimited voice packs
+- roaming packs by destination or region
+- OTT bundles such as Netflix, Disney+, Prime Video
+- premium support, hotspot, gaming, and family-sharing features
+- business and enterprise bundles
+
+This setup is designed to make Telly feel like a tailored telecom advisor that can engage customers, understand their needs, and present custom offers that go beyond standard prebuilt packages.
+
 ## Getting started (local, without Docker)
 
 ### Backend

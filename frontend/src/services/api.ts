@@ -2,6 +2,7 @@ import axios from 'axios';
 import type {
   AgentCommunicationTrace,
   AskAction,
+  AutopilotSettings,
   BillingRecord,
   CustomerAnalytics,
   CustomerProfile,
@@ -158,6 +159,21 @@ export const api = {
       issue,
       priority,
     });
+    return data;
+  },
+
+  getAutopilot: async (customerId: string): Promise<AutopilotSettings> => {
+    const { data } = await apiClient.get<AutopilotSettings>(`/autopilot/${customerId}`);
+    return data;
+  },
+
+  enableAutopilot: async (customerId: string): Promise<AutopilotSettings> => {
+    const { data } = await apiClient.post<AutopilotSettings>(`/autopilot/${customerId}/enable`);
+    return data;
+  },
+
+  disableAutopilot: async (customerId: string): Promise<AutopilotSettings> => {
+    const { data } = await apiClient.delete<AutopilotSettings>(`/autopilot/${customerId}/disable`);
     return data;
   },
 };

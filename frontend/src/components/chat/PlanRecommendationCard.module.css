@@ -3,15 +3,39 @@
   border: 1px solid #e2e8f0;
   border-radius: 12px;
   padding: 1.25rem 1.5rem;
-  max-width: 480px;
+  max-width: 520px;
   box-shadow: 0 1px 3px rgba(15, 23, 42, 0.06);
+}
+
+.customCard {
+  border: 2px solid #0ea5e9;
+  background: linear-gradient(135deg, #f0f9ff 0%, #ffffff 60%);
+}
+
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  background: linear-gradient(90deg, #0ea5e9, #6366f1);
+  color: #fff;
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  padding: 0.25rem 0.75rem;
+  border-radius: 999px;
+  margin-bottom: 0.75rem;
+}
+
+.badgeIcon {
+  font-size: 0.65rem;
 }
 
 .header {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  margin-bottom: 0.75rem;
+  margin-bottom: 0.5rem;
 }
 
 .planName {
@@ -27,12 +51,80 @@
 }
 
 .reason {
-  font-size: 0.9rem;
+  font-size: 0.88rem;
   color: #475569;
-  margin-bottom: 0.9rem;
-  line-height: 1.4;
+  margin-bottom: 1rem;
+  line-height: 1.45;
 }
 
+/* ---- Custom plan component breakdown ---- */
+.components {
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  padding: 0.75rem 1rem;
+  margin-bottom: 0.9rem;
+}
+
+.componentsLabel {
+  font-size: 0.75rem;
+  font-weight: 700;
+  color: #64748b;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin: 0 0 0.6rem 0;
+}
+
+.componentList {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.componentItem {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  grid-template-rows: auto auto;
+  column-gap: 0.75rem;
+  row-gap: 0.1rem;
+  padding-bottom: 0.4rem;
+  border-bottom: 1px solid #e2e8f0;
+}
+
+.componentItem:last-child {
+  border-bottom: none;
+  padding-bottom: 0;
+}
+
+.componentName {
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: #0f172a;
+  grid-column: 1;
+  grid-row: 1;
+}
+
+.componentDesc {
+  font-size: 0.75rem;
+  color: #64748b;
+  grid-column: 1;
+  grid-row: 2;
+}
+
+.componentPrice {
+  font-size: 0.82rem;
+  font-weight: 700;
+  color: #0ea5e9;
+  grid-column: 2;
+  grid-row: 1 / 3;
+  align-self: center;
+  white-space: nowrap;
+}
+
+/* ---- Feature pills ---- */
 .features {
   list-style: none;
   display: flex;
@@ -51,6 +143,32 @@
   font-weight: 500;
 }
 
+/* ---- Discount / savings row ---- */
+.discountNote {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  font-size: 0.82rem;
+  color: #15803d;
+  font-weight: 600;
+  margin-bottom: 1rem;
+  background: #f0fdf4;
+  border: 1px solid #bbf7d0;
+  border-radius: 8px;
+  padding: 0.5rem 0.75rem;
+}
+
+.savingsBadge {
+  font-size: 0.75rem;
+  background: #dcfce7;
+  color: #166534;
+  padding: 0.15rem 0.5rem;
+  border-radius: 999px;
+  font-weight: 700;
+}
+
+/* ---- Actions ---- */
 .actions {
   display: flex;
   gap: 0.75rem;

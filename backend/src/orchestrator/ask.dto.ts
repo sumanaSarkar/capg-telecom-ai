@@ -1,7 +1,7 @@
 import { ApiPropertyOptional, ApiProperty } from '@nestjs/swagger';
 import { IsIn, IsNotEmpty, IsOptional, IsString } from 'class-validator';
 
-export type AskAction = 'ask' | 'confirm' | 'payment_success';
+export type AskAction = 'ask' | 'confirm' | 'payment_success' | 'autopilot_enable' | 'autopilot_disable';
 
 export class AskDto {
   @ApiProperty({ example: 'Suggest the best data plan and recharge it' })
@@ -16,10 +16,10 @@ export class AskDto {
 
   @ApiPropertyOptional({
     example: 'ask',
-    enum: ['ask', 'confirm', 'payment_success'],
+    enum: ['ask', 'confirm', 'payment_success', 'autopilot_enable', 'autopilot_disable'],
   })
   @IsOptional()
-  @IsIn(['ask', 'confirm', 'payment_success'])
+  @IsIn(['ask', 'confirm', 'payment_success', 'autopilot_enable', 'autopilot_disable'])
   action?: AskAction;
 
   @ApiPropertyOptional({ example: 'plan-002' })

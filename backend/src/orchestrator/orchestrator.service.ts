@@ -1,4 +1,5 @@
 import { Inject, Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { AutopilotService } from '../agents/autopilot/autopilot.service';
 import { AnalyticsService } from '../agents/analytics/analytics.service';
 import { BillingRecord } from '../agents/billing/billing.model';
 import { BillingService } from '../agents/billing/billing.service';
@@ -12,6 +13,10 @@ import { RoamingService } from '../agents/roaming/roaming.service';
 import type { ConversationMessage, ILlmProvider } from '../llm/llm-provider.interface';
 import { LLM_PROVIDER } from '../llm/llm-provider.interface';
 import { AskAction, AskDto } from './ask.dto';
+import { TellyResponseTemplateService } from './telly-response-template.service';
+import { CustomerIntelligenceService } from './customer-intelligence.service';
+import { CustomPlanComposerService } from './custom-plan-composer.service';
+import { DecisionEngineService } from './decision-engine.service';
 import { RecommendationService } from './recommendation.service';
 
 const MAX_FLOW_TRACES_PER_CUSTOMER = 5;
@@ -45,6 +50,7 @@ export interface AgentCommunicationTrace {
 export type OrchestratorStage =
   | 'recommendation'
   | 'payment'
+  | 'bill-payment'
   | 'complete'
   | 'billing'
   | 'plans'
@@ -66,6 +72,7 @@ export interface OrchestratorResponse {
   finalMessage: string;
   stage: OrchestratorStage;
   billingHistory?: BillingRecord[];
+  autopilot?: { enabled: boolean; action?: string };
   context?: Record<string, unknown>;
 }
 
@@ -85,6 +92,11 @@ export class OrchestratorService {
     private readonly roamingService: RoamingService,
     private readonly billingService: BillingService,
     private readonly recommendationService: RecommendationService,
+    private readonly decisionEngineService: DecisionEngineService,
+    private readonly customerIntelligenceService: CustomerIntelligenceService,
+    private readonly customPlanComposerService: CustomPlanComposerService,
+    private readonly autopilotService: AutopilotService,
+    private readonly tellyResponseTemplateService: TellyResponseTemplateService,
   ) {}
 
   async ask(dto: AskDto): Promise<OrchestratorResponse> {
@@ -99,6 +111,12 @@ export class OrchestratorService {
       response = await this.handleConfirm(dto, intent, agents);
     } else if (action === 'payment_success') {
       response = await this.handlePaymentSuccess(dto, intent, agents);
+    } else if (action === 'autopilot_enable') {
+      this.autopilotService.enable(dto.customerId);
+      response = { intent, agents, finalMessage: '✅ Telly Autopilot is now ON. I will automatically handle your bill payments and recharges on your behalf. You can disable this anytime.', stage: 'complete', autopilot: { enabled: true, action: 'enabled' } };
+    } else if (action === 'autopilot_disable') {
+      this.autopilotService.disable(dto.customerId);
+      response = { intent, agents, finalMessage: '🔒 Telly Autopilot is now OFF. You are back in full control of all payments and recharges.', stage: 'complete', autopilot: { enabled: false, action: 'disabled' } };
     } else {
       response = await this.handleAsk(dto, intent, agents);
     }
@@ -123,6 +141,12 @@ export class OrchestratorService {
     return /\b(current|my|existing|present)\s+plan\b/i.test(message) || /\bwhat\s+is\s+my\s+plan\b/i.test(message) || /\bwhich\s+plan\s+am\s+i\s+on\b/i.test(message);
   }
 
+  private isPayBillRequest(message: string): boolean {
+    return /\b(pay|clear|settle|make)\b.*\b(bill|invoice|due|pending|payment)\b/i.test(message) ||
+      /\b(bill|invoice)\b.*\b(pay|clear|settle)\b/i.test(message) ||
+      /\bpay\s+my\s+bill\b/i.test(message);
+  }
+
   private isAvailablePlansRequest(message: string): boolean {
     return /\b(available|all|list|show|compare)\b.*\bplans?\b/i.test(message) || /\bplans?\s+available\b/i.test(message) || /\bplan\s+options\b/i.test(message);
   }
@@ -138,33 +162,14 @@ export class OrchestratorService {
   private isTelecomRelatedRequest(message: string): boolean {
     const normalized = this.normalizeText(message);
     const telecomTerms = [
-      'plan',
-      'plans',
-      'recharge',
-      'topup',
-      'billing',
-      'bill',
-      'invoice',
-      'payment',
-      'pay',
-      'roaming',
-      'esim',
-      'sim',
-      'support',
-      'ticket',
-      'profile',
-      'account',
-      'analytics',
-      'usage',
-      'data',
-      'call',
-      'minutes',
-      'mobile',
-      'network',
-      'service',
-      'internet',
+      'plan', 'plans', 'recharge', 'topup', 'billing', 'bill', 'invoice',
+      'payment', 'pay', 'roaming', 'esim', 'sim', 'support', 'ticket',
+      'profile', 'account', 'analytics', 'usage', 'data', 'call', 'minutes',
+      'mobile', 'network', 'service', 'internet', 'bundle', 'package',
+      'cheap', 'affordable', 'budget', 'travel', 'abroad', 'international',
+      'stream', 'netflix', 'hotstar', 'ott', 'gaming', 'decide', 'manage',
+      'set me up', 'set up', 'upgrade', 'recommend', 'suggest',
     ];
-
     return telecomTerms.some((term) => normalized.includes(term));
   }
 
@@ -173,7 +178,7 @@ export class OrchestratorService {
   }
 
   private isActionableTelecomRequest(message: string): boolean {
-    return /\b(show|list|compare|recommend|suggest|recharge|top\s*up|pay|payment|billing|bill|invoice|history|plan|roaming|esim|activate|deactivate|support|ticket|profile|account|usage|manage|schedule|regular|interval|monthly|weekly|autopay|auto\s*debit)\b/i.test(message);
+    return /\b(show|list|compare|recommend|suggest|recharge|top\s*up|pay|payment|billing|bill|invoice|history|plan|roaming|esim|activate|deactivate|support|ticket|profile|account|usage|manage|schedule|regular|interval|monthly|weekly|autopay|auto\s*debit|set\s*up|set\s*me\s*up|decide|travel|international|abroad|stream|netflix|hotstar|gaming|cheap|affordable|upgrade|bundle|package)\b/i.test(message);
   }
 
   private isRecurringPaymentOrRechargeRequest(message: string): boolean {
@@ -334,6 +339,10 @@ export class OrchestratorService {
       return { intent, agents, finalMessage, stage: 'complete' };
     }
 
+    if (this.isPayBillRequest(dto.message)) {
+      return this.handlePayBill(dto, intent, agents);
+    }
+
     if (this.isCurrentPlanRequest(dto.message)) {
       const profile = this.profileService.getProfile(dto.customerId);
       const currentPlan = this.planService.getPlans(dto.customerId).find((plan) => plan.name === profile.plan);
@@ -473,33 +482,41 @@ export class OrchestratorService {
       Promise.resolve(this.planService.getPlans(dto.customerId)),
     ]);
 
-    const explicitPlan = this.resolveExplicitPlan(dto.message, plans);
-
-    // Step 4: send aggregated context to the recommendation engine.
-    const rankedPlans = this.recommendationService.rankPlans(analytics, plans);
-    const bestPlan = explicitPlan ?? rankedPlans[0].plan;
-
-    const recommendationContext = {
-      ...this.recommendationService.buildRecommendationContext(
-        analytics,
-        bestPlan,
-      ),
-      customerName: profile.name,
-    };
-
-    const reason = explicitPlan
-      ? `You asked for the ${bestPlan.name} plan, so I captured that selection for you.`
-      : await this.llmProvider.generateResponse(
-          recommendationContext,
-          "Based on {{customerName}}'s usage of {{currentUsageGB}}GB out of {{currentLimitGB}}GB " +
-            '({{usagePercent}}% consumed), the {{planName}} plan ({{planDataGB}}GB for ${{planPrice}}/mo) ' +
-            'offers the best balance of coverage and value.',
-        );
-
-    const finalMessage = await this.llmProvider.generateResponse(
-      { planName: bestPlan.name, planPrice: bestPlan.price },
-      'I recommend the {{planName}} plan at ${{planPrice}}/mo. Would you like to proceed with this plan?',
+    const billingHistory = this.billingService.getBillingHistory(dto.customerId);
+    const intelligence = this.customerIntelligenceService.analyzeCustomer(
+      profile,
+      analytics,
+      billingHistory,
     );
+
+    // Compose a hyper-personalised plan from components rather than picking a static one.
+    const customPlan = this.customPlanComposerService.compose(
+      dto.message,
+      profile,
+      analytics,
+      intelligence,
+    );
+
+    // Keep ranked plans for context / fallback reference but don't use them as the offer.
+    const rankedPlans = this.recommendationService.rankPlans(analytics, plans);
+
+    const reason = [
+      customPlan.discountNote ?? intelligence.exclusiveOfferHint,
+      intelligence.motivation,
+    ]
+      .filter(Boolean)
+      .join(' ');
+
+    const componentList = customPlan.components
+      .map((c) => `${c.name} (₹${c.monthlyPrice}/mo)`)
+      .join(', ');
+
+    const finalMessage = this.tellyResponseTemplateService.buildRecommendationMessage({
+      message: dto.message,
+      customerName: profile.name,
+      customPlan,
+      intelligence,
+    });
 
     this.appendConversationTurn(dto.customerId, { role: 'user', content: dto.message });
     this.appendConversationTurn(dto.customerId, { role: 'assistant', content: finalMessage });
@@ -507,18 +524,81 @@ export class OrchestratorService {
     return {
       intent,
       agents,
-      recommendation: { plan: bestPlan, reason },
+      recommendation: { plan: customPlan as unknown as Plan, reason },
       finalMessage,
       stage: 'recommendation',
       context: {
         profile,
         analytics,
-        selectedPlan: explicitPlan ? { id: bestPlan.id, name: bestPlan.name } : undefined,
+        customPlan,
         rankedPlans: rankedPlans.map((r) => ({
           planId: r.plan.id,
           score: r.score,
         })),
+        customerIntelligence: {
+          segment: intelligence.segment,
+          priceSensitivity: intelligence.priceSensitivity,
+          motivation: intelligence.motivation,
+          expectedOfferStyle: intelligence.expectedOfferStyle,
+          historicalSignals: intelligence.historicalSignals,
+          exclusiveOfferHint: intelligence.exclusiveOfferHint,
+        },
       },
+    };
+  }
+
+  private async handlePayBill(
+    dto: AskDto,
+    intent: string,
+    agents: string[],
+  ): Promise<OrchestratorResponse> {
+    const allRecords = this.billingService.getBillingHistory(dto.customerId);
+    const pendingBills = allRecords.filter((r) => r.status === 'pending');
+    const autopilotEnabled = this.autopilotService.isEnabled(dto.customerId);
+
+    if (pendingBills.length === 0) {
+      const finalMessage = 'Great news — you have no pending bills! All your payments are up to date.';
+      this.appendConversationTurn(dto.customerId, { role: 'user', content: dto.message });
+      this.appendConversationTurn(dto.customerId, { role: 'assistant', content: finalMessage });
+      return { intent, agents, finalMessage, stage: 'complete', billingHistory: allRecords };
+    }
+
+    const bill = pendingBills[0];
+
+    if (autopilotEnabled) {
+      // Autopilot ON: Telly pays without asking for confirmation.
+      const payment = this.paymentService.initiatePayment(dto.customerId, bill.id, bill.amount);
+      this.paymentService.confirmPayment(payment.paymentId);
+      const billingRecord = this.billingService.recordTransaction(dto.customerId, bill.id, bill.amount);
+      const finalMessage = `✅ Telly Autopilot paid your pending bill of $${bill.amount.toFixed(2)} for "${bill.description}" automatically. Receipt recorded. You are all caught up!`;
+      this.appendConversationTurn(dto.customerId, { role: 'user', content: dto.message });
+      this.appendConversationTurn(dto.customerId, { role: 'assistant', content: finalMessage });
+      return {
+        intent,
+        agents,
+        finalMessage,
+        stage: 'complete',
+        billingHistory: allRecords,
+        autopilot: { enabled: true, action: 'auto-paid' },
+        context: { billingRecord, payment },
+      };
+    }
+
+    // Autopilot OFF: show payment link and ask user to confirm.
+    const payment = this.paymentService.initiatePayment(dto.customerId, bill.id, bill.amount);
+    const finalMessage = `You have a pending bill of $${bill.amount.toFixed(2)} for "${bill.description}". I have prepared the payment link below. Complete it and confirm when done.`;
+    this.appendConversationTurn(dto.customerId, { role: 'user', content: dto.message });
+    this.appendConversationTurn(dto.customerId, { role: 'assistant', content: finalMessage });
+    return {
+      intent,
+      agents,
+      finalMessage,
+      stage: 'bill-payment',
+      paymentUrl: payment.paymentUrl,
+      paymentId: payment.paymentId,
+      billingHistory: pendingBills,
+      autopilot: { enabled: false },
+      context: { pendingBill: bill },
     };
   }
 
