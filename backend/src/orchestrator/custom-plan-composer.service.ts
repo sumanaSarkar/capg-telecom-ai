@@ -35,6 +35,7 @@ export class CustomPlanComposerService {
   ): CustomPlan {
     const normalized = message.toLowerCase();
     const components: CustomPlanComponent[] = [];
+    const destination = this.resolveRoamingDestination(normalized);
 
     // 1. Determine base data tier from usage patterns
     const baseData = this.resolveDataTier(analytics, normalized);
@@ -45,7 +46,7 @@ export class CustomPlanComposerService {
     components.push(voiceTier);
 
     // 3. Attach catalog-driven add-ons relevant to the request
-    const relevantAddOns = this.selectRelevantAddOns(normalized, intelligence);
+    const relevantAddOns = this.selectRelevantAddOns(normalized, intelligence, destination);
     components.push(...relevantAddOns);
 
     const basePrice = components.reduce((sum, c) => sum + c.monthlyPrice, 0);
@@ -111,8 +112,15 @@ export class CustomPlanComposerService {
     return { name: 'Standard Voice (300 min)', description: '300 minutes for everyday calls', monthlyPrice: 79, tag: 'voice-300' };
   }
 
-  private selectRelevantAddOns(normalized: string, intelligence: CustomerIntelligence): CustomPlanComponent[] {
+  private selectRelevantAddOns(
+    normalized: string,
+    intelligence: CustomerIntelligence,
+    destination?: string,
+  ): CustomPlanComponent[] {
     const addOns: CustomPlanComponent[] = [];
+    const removedGaming = /\b(remove|without|exclude|drop|no)\b[^.]*\b(gaming|game)\b/.test(normalized);
+    const requestedPlatforms = this.extractStreamingPlatforms(normalized);
+    const explicitlyGaming = /\b(gaming|game|gamer)\b/.test(normalized);
     const scored = OFFER_CATALOG
       .filter((item) => item.category === 'add-on' || item.category === 'feature')
       .map((item) => ({ item, score: this.scoreAddOn(item, normalized, intelligence) }))
@@ -121,6 +129,15 @@ export class CustomPlanComposerService {
       .slice(0, 4);
 
     for (const { item } of scored) {
+      if (removedGaming && item.name.toLowerCase().includes('gaming')) {
+        continue;
+      }
+      if (!explicitlyGaming && item.name.toLowerCase().includes('gaming')) {
+        continue;
+      }
+      if (destination && item.name.toLowerCase().includes('roaming')) {
+        continue;
+      }
       addOns.push({
         name: item.name,
         description: item.description,
@@ -128,7 +145,80 @@ export class CustomPlanComposerService {
         tag: item.tags[0] ?? item.id,
       });
     }
-    return addOns;
+
+    const relevantAddOns = explicitlyGaming
+      ? addOns
+      : addOns.filter((addOn) => !/gaming|game/i.test(addOn.name));
+
+    if (requestedPlatforms.length > 0) {
+      const platformAddOns = [
+        ...relevantAddOns.filter((addOn) => !/ott|netflix|entertainment/i.test(addOn.name)),
+        ...requestedPlatforms.map((platform) => ({
+          name: `${platform} Subscription`,
+          description: `Access to ${platform} content as requested.`,
+          monthlyPrice: this.platformPrice(platform),
+          tag: platform.toLowerCase().replace(/[^a-z0-9]+/g, '-'),
+        })),
+      ];
+      return destination ? [this.buildRoamingComponent(destination), ...platformAddOns] : platformAddOns;
+    }
+
+    return destination ? [this.buildRoamingComponent(destination), ...relevantAddOns] : relevantAddOns;
+  }
+
+  private resolveRoamingDestination(normalized: string): string | undefined {
+    const destinations = ['kenya', 'bhutan', 'usa', 'united states', 'uk', 'united kingdom', 'uae', 'dubai', 'france', 'germany', 'spain'];
+    return destinations.find((destination) => normalized.includes(destination));
+  }
+
+  private buildRoamingComponent(destination: string): CustomPlanComponent {
+    if (destination === 'kenya') {
+      return {
+        name: 'Kenya Roaming Pass',
+        description: '2 GB roaming data, incoming calls ₹8/min, outgoing calls ₹15/min, SMS ₹5 each; alerts at 80% usage.',
+        monthlyPrice: 399,
+        tag: 'kenya-roaming',
+      };
+    }
+
+    if (destination === 'bhutan') {
+      return {
+        name: 'Bhutan Roaming Pass',
+        description: '3 GB roaming data, incoming calls ₹6/min, outgoing calls ₹12/min, SMS ₹4 each; alerts at 80% usage.',
+        monthlyPrice: 349,
+        tag: 'bhutan-roaming',
+      };
+    }
+
+    const label = destination === 'united states' ? 'USA' : destination.toUpperCase();
+    return {
+      name: `${label} Roaming Pass`,
+      description: `Destination roaming data and voice coverage for ${label}; per-minute rates are shown before activation.`,
+      monthlyPrice: 399,
+      tag: `${destination.replace(/\s+/g, '-')}-roaming`,
+    };
+  }
+
+  private extractStreamingPlatforms(normalized: string): string[] {
+    const platformNames = [
+      { pattern: /sony\s*liv/, name: 'SonyLIV' },
+      { pattern: /jio\s*hotstar|hotstar/, name: 'JioHotstar' },
+      { pattern: /netflix/, name: 'Netflix' },
+      { pattern: /prime\s*video|amazon\s*prime/, name: 'Prime Video' },
+      { pattern: /disney\s*plus|disney\+/, name: 'Disney+' },
+    ];
+
+    return platformNames.filter(({ pattern }) => pattern.test(normalized)).map(({ name }) => name);
+  }
+
+  private platformPrice(platform: string): number {
+    return {
+      Netflix: 199,
+      JioHotstar: 149,
+      SonyLIV: 99,
+      'Prime Video': 149,
+      'Disney+': 149,
+    }[platform] ?? 99;
   }
 
   private scoreAddOn(item: OfferCatalogItem, normalized: string, intelligence: CustomerIntelligence): number {
@@ -138,10 +228,10 @@ export class CustomPlanComposerService {
     }
     if (item.segment === intelligence.segment) score += 3;
     // strong keyword boosts
-    if (/netflix|ott|stream/.test(normalized) && /ott|netflix|stream/.test(item.tags.join(' '))) score += 5;
+    if (/netflix|ott|stream|sony\s*liv|hotstar|prime\s*video|disney/.test(normalized) && /ott|netflix|stream/.test(item.tags.join(' '))) score += 5;
     if (/roam|travel|europe|usa|international/.test(normalized) && /roam|travel/.test(item.tags.join(' '))) score += 5;
     if (/hotspot|jio hotstar|hotstar/.test(normalized) && /hotspot/.test(item.tags.join(' '))) score += 5;
-    if (/gaming|game/.test(normalized) && /gaming|latency/.test(item.tags.join(' '))) score += 5;
+    if (!/\b(remove|without|exclude|drop|no)\b[^.]*\b(gaming|game)\b/.test(normalized) && /gaming|game/.test(normalized) && /gaming|latency/.test(item.tags.join(' '))) score += 5;
     if (/family|household/.test(normalized) && /family/.test(item.tags.join(' '))) score += 5;
     // skip if already covered by the voice/data tier naming
     if (/unlimited-calls|voice-300|intl-voice/.test(item.id)) return 0;
@@ -190,7 +280,11 @@ export class CustomPlanComposerService {
     const hasIntlVoice = components.some((c) => c.tag === 'intl-voice');
     const hasOTT = components.some((c) => /ott|netflix|stream/i.test(c.tag));
     const hasRoaming = components.some((c) => /roam|travel/i.test(c.tag));
+    const hasKenyaRoaming = components.some((c) => c.tag === 'kenya-roaming');
+    const hasBhutanRoaming = components.some((c) => c.tag === 'bhutan-roaming');
 
+    if (hasKenyaRoaming) return 'Telly Kenya Roaming Plan';
+    if (hasBhutanRoaming) return 'Telly Bhutan Roaming Plan';
     if (intelligence.segment === 'family') return 'Telly Family Unlimited Bundle';
     if (intelligence.segment === 'traveler' || hasRoaming) return 'Telly Global Traveler Plan';
     if (intelligence.segment === 'business') return 'Telly Business Pro Bundle';

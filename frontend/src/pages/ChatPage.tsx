@@ -114,7 +114,7 @@ function clearFlowClearMarker(customerId: string): void {
 }
 
 function getChatStorageKey(customerId: string) {
-  return `telecom-ai-chat:${customerId}`;
+  return `telecom-ai-chat-v2:${customerId}`;
 }
 
 function readStoredChatHistory(customerId: string): AgentCommunicationTrace[] {
@@ -298,7 +298,7 @@ function formatStepTimer(steps: AgentCommunicationTrace['steps'], stepIndex: num
   const firstTime = new Date(first).getTime();
   const currentTime = new Date(current).getTime();
 
-  if (!Number.isFinite(firstTime) || !Number.isFinite(currentTime) || currentTime < firstTime) {
+  if (!Number.isFinite(firstTime) || !Number.isFinite(currentTime) || currentTime <= firstTime) {
     return `t+${fallbackSeconds.toFixed(1)}s`;
   }
 

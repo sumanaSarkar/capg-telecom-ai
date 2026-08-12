@@ -1,8 +1,9 @@
-import { Inject, Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { Inject, Injectable, Logger, NotFoundException, Optional } from '@nestjs/common';
 import { AutopilotService } from '../agents/autopilot/autopilot.service';
 import { AnalyticsService } from '../agents/analytics/analytics.service';
 import { BillingRecord } from '../agents/billing/billing.model';
 import { BillingService } from '../agents/billing/billing.service';
+import { EsimService } from '../agents/esim/esim.service';
 import { PaymentService } from '../agents/payment/payment.service';
 import { Plan } from '../agents/plan/plan.model';
 import { PlanService } from '../agents/plan/plan.service';
@@ -97,6 +98,7 @@ export class OrchestratorService {
     private readonly customPlanComposerService: CustomPlanComposerService,
     private readonly autopilotService: AutopilotService,
     private readonly tellyResponseTemplateService: TellyResponseTemplateService,
+    @Optional() private readonly esimService?: EsimService,
   ) {}
 
   async ask(dto: AskDto): Promise<OrchestratorResponse> {
@@ -145,6 +147,36 @@ export class OrchestratorService {
     return /\b(pay|clear|settle|make)\b.*\b(bill|invoice|due|pending|payment)\b/i.test(message) ||
       /\b(bill|invoice)\b.*\b(pay|clear|settle)\b/i.test(message) ||
       /\bpay\s+my\s+bill\b/i.test(message);
+  }
+
+  private isEsimStatusRequest(message: string): boolean {
+    const normalized = this.normalizeText(message);
+    return /\b(e\s*sim|esim)\b.*\b(enabled|active|on|off|disabled|status)\b/i.test(normalized) ||
+      /\b(is|what|whether)\b.*\b(e\s*sim|esim)\b/i.test(normalized) ||
+      /\b(e\s*sim|esim)\b.*\b(is|enabled|active|on|off|disabled)\b/i.test(normalized);
+  }
+
+  private isEsimActivationFollowUp(customerId: string, message: string): boolean {
+    const history = this.conversationHistoryByCustomer.get(customerId) ?? [];
+    const lastAssistantMessage = [...history].reverse().find((turn) => turn.role === 'assistant')?.content ?? '';
+    const refersToPreviousEsim = /e\s*sim/i.test(lastAssistantMessage) &&
+      /disabled|activate|active/i.test(lastAssistantMessage);
+    const awaitingDeviceId = /device\s+id/i.test(lastAssistantMessage);
+    return (refersToPreviousEsim && /\b(activate|enable|turn\s+on|switch\s+on)\b/i.test(message)) ||
+      (awaitingDeviceId && Boolean(this.getDeviceId(message)));
+  }
+
+  private isDeviceIdGuidanceRequest(customerId: string, message: string): boolean {
+    const history = this.conversationHistoryByCustomer.get(customerId) ?? [];
+    const lastAssistantMessage = [...history].reverse().find((turn) => turn.role === 'assistant')?.content ?? '';
+    return /device\s+id/i.test(lastAssistantMessage) &&
+      /\b(where|what|find|locate|know|check|see|discover|tell|show|how)\b/i.test(message) &&
+      /\b(device|id|number)\b/i.test(message);
+  }
+
+  private getDeviceId(message: string): string | undefined {
+    const explicitDevice = message.match(/\bdevice(?:\s+id)?\s*[:#-]?\s*([a-z0-9-]{3,})\b/i);
+    return explicitDevice?.[1];
   }
 
   private isAvailablePlansRequest(message: string): boolean {
@@ -231,25 +263,27 @@ export class OrchestratorService {
   }
 
   private recordCommunicationTrace(dto: AskDto, response: OrchestratorResponse) {
-    const timestamp = new Date().toISOString();
+    const traceStart = Date.now();
+    let stepIndex = 0;
+    const nextTimestamp = () => new Date(traceStart + stepIndex++ * 120).toISOString();
     const steps: AgentCommunicationStep[] = [
       {
         agent: 'Orchestrator',
         action: 'Intent detected',
         detail: `Detected intent "${response.intent}" and selected agents: ${response.agents.join(', ') || 'none'}.`,
-        timestamp,
+        timestamp: nextTimestamp(),
       },
       ...response.agents.map((agent) => ({
         agent,
         action: 'Agent engaged',
         detail: `Agent ${agent} handled the request.`,
-        timestamp,
+        timestamp: nextTimestamp(),
       })),
       {
         agent: 'LLM',
         action: 'Generated response',
         detail: 'LLM generated the final assistant response.',
-        timestamp,
+        timestamp: nextTimestamp(),
       },
     ];
 
@@ -322,6 +356,18 @@ export class OrchestratorService {
     intent: string,
     agents: string[],
   ): Promise<OrchestratorResponse> {
+    if (this.isEsimStatusRequest(dto.message)) {
+      return this.handleEsimStatus(dto, intent, agents);
+    }
+
+    if (this.isDeviceIdGuidanceRequest(dto.customerId, dto.message)) {
+      return this.handleDeviceIdGuidance(dto, intent, agents);
+    }
+
+    if (this.isEsimActivationFollowUp(dto.customerId, dto.message)) {
+      return this.handleEsimActivation(dto, intent, agents);
+    }
+
     const hasExistingConversation = (this.conversationHistoryByCustomer.get(dto.customerId) ?? []).length > 0;
     const isTelecomRelated = this.isTelecomRelatedRequest(dto.message);
     const isFollowUp = this.isFollowUpConversationRequest(dto.message);
@@ -543,6 +589,89 @@ export class OrchestratorService {
           historicalSignals: intelligence.historicalSignals,
           exclusiveOfferHint: intelligence.exclusiveOfferHint,
         },
+      },
+    };
+  }
+
+  private async handleEsimStatus(
+    dto: AskDto,
+    intent: string,
+    agents: string[],
+  ): Promise<OrchestratorResponse> {
+    const esimStatus = this.esimService?.getEsimStatus(dto.customerId) ?? {
+      customerId: dto.customerId,
+      active: false,
+    };
+    const finalMessage = esimStatus.active
+      ? `Your eSIM is enabled and active${esimStatus.deviceId ? ` on device ${esimStatus.deviceId}` : ''}. It was activated${esimStatus.activatedAt ? ` on ${new Date(esimStatus.activatedAt).toLocaleDateString()}` : ''}.`
+      : 'Your eSIM is currently disabled. I can help you activate it whenever you are ready.';
+
+    this.appendConversationTurn(dto.customerId, { role: 'user', content: dto.message });
+    this.appendConversationTurn(dto.customerId, { role: 'assistant', content: finalMessage });
+
+    return {
+      intent,
+      agents: agents.includes('esim') ? agents : [...agents, 'esim'],
+      finalMessage,
+      stage: 'complete',
+      context: { esimStatus },
+    };
+  }
+
+  private async handleEsimActivation(
+    dto: AskDto,
+    intent: string,
+    agents: string[],
+  ): Promise<OrchestratorResponse> {
+    const deviceId = this.getDeviceId(dto.message);
+    if (!deviceId) {
+      const finalMessage = 'I can activate your eSIM. Please share the device ID you want to use, for example: “Activate it on device Pixel-8”.';
+      this.appendConversationTurn(dto.customerId, { role: 'user', content: dto.message });
+      this.appendConversationTurn(dto.customerId, { role: 'assistant', content: finalMessage });
+      return {
+        intent,
+        agents: agents.includes('esim') ? agents : [...agents, 'esim'],
+        finalMessage,
+        stage: 'complete',
+        context: { pendingAction: 'esim_activation', required: 'deviceId' },
+      };
+    }
+
+    const esimStatus = this.esimService?.activateEsim(dto.customerId, deviceId) ?? {
+      customerId: dto.customerId,
+      active: true,
+      deviceId,
+      activatedAt: new Date().toISOString(),
+    };
+    const finalMessage = `Your eSIM is now enabled on device ${deviceId}. You are ready to use mobile service.`;
+    this.appendConversationTurn(dto.customerId, { role: 'user', content: dto.message });
+    this.appendConversationTurn(dto.customerId, { role: 'assistant', content: finalMessage });
+    return {
+      intent,
+      agents: agents.includes('esim') ? agents : [...agents, 'esim'],
+      finalMessage,
+      stage: 'complete',
+      context: { esimStatus },
+    };
+  }
+
+  private async handleDeviceIdGuidance(
+    dto: AskDto,
+    intent: string,
+    agents: string[],
+  ): Promise<OrchestratorResponse> {
+    const finalMessage = 'Sorry, I cannot read your device ID from here. You can find it in Settings: on Android, open Settings > About phone > Device identifiers (or IMEI); on iPhone, open Settings > General > About and copy the IMEI or EID. Send me the device ID when you have it and I will continue the eSIM activation.';
+    this.appendConversationTurn(dto.customerId, { role: 'user', content: dto.message });
+    this.appendConversationTurn(dto.customerId, { role: 'assistant', content: finalMessage });
+    return {
+      intent,
+      agents: agents.includes('esim') ? agents : [...agents, 'esim'],
+      finalMessage,
+      stage: 'complete',
+      context: {
+        pendingAction: 'esim_activation',
+        required: 'deviceId',
+        guidanceProvided: true,
       },
     };
   }

@@ -3,7 +3,7 @@ import type { Dispatch, ReactNode, SetStateAction } from 'react';
 import type { OrchestratorResponse } from '../services/types';
 import { useAuth } from './useAuth';
 
-const STORAGE_KEY_PREFIX = 'telecom-ai-chat';
+const STORAGE_KEY_PREFIX = 'telecom-ai-chat-v2';
 const MAX_CHAT_TURNS = 5;
 
 export interface ChatMessage {

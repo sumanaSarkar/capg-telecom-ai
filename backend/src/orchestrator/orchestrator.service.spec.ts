@@ -123,6 +123,63 @@ describe('OrchestratorService', () => {
     expect(result.finalMessage.toLowerCase()).not.toContain('recharge');
   });
 
+  it('answers greeting-prefixed eSIM status questions without a plan recommendation', async () => {
+    const result = await orchestrator.ask({
+      message: 'Hi Telly my esim disabled?',
+      customerId: 'cust-001',
+    });
+
+    expect(result.recommendation).toBeUndefined();
+    expect(result.context?.esimStatus).toMatchObject({ active: false });
+    expect(result.finalMessage).toContain('eSIM is currently disabled');
+  });
+
+  it('preserves eSIM context when the customer follows status with activation', async () => {
+    const status = await orchestrator.ask({
+      message: 'Is my eSIM enabled?',
+      customerId: 'cust-001',
+    });
+
+    expect(status.context?.esimStatus).toMatchObject({ active: false });
+
+    const activation = await orchestrator.ask({
+      message: 'Ok please activate it',
+      customerId: 'cust-001',
+    });
+
+    expect(activation.stage).toBe('complete');
+    expect(activation.finalMessage).toContain('device ID');
+    expect(activation.context).toMatchObject({
+      pendingAction: 'esim_activation',
+      required: 'deviceId',
+    });
+    expect(activation.recommendation).toBeUndefined();
+
+    const guidance = await orchestrator.ask({
+      message: 'Ok tell my device ID',
+      customerId: 'cust-001',
+    });
+
+    expect(guidance.finalMessage).toContain('Sorry, I cannot read your device ID');
+    expect(guidance.finalMessage).toContain('Settings > About phone');
+    expect(guidance.finalMessage).toContain('Settings > General > About');
+    expect(guidance.context).toMatchObject({
+      pendingAction: 'esim_activation',
+      guidanceProvided: true,
+    });
+
+    const activated = await orchestrator.ask({
+      message: 'device Pixel-8',
+      customerId: 'cust-001',
+    });
+
+    expect(activated.finalMessage).toContain('enabled on device Pixel-8');
+    expect(activated.context?.esimStatus).toMatchObject({
+      active: true,
+      deviceId: 'Pixel-8',
+    });
+  });
+
   it('uses previous turns when answering follow-up chat prompts', async () => {
     const chatMock = jest.fn().mockResolvedValue('I can help with that.');
     llmProvider = {
@@ -310,6 +367,43 @@ describe('OrchestratorService', () => {
     // composed plan name is set by the decision engine based on detected segment
     expect(typeof (plan.name as string)).toBe('string');
     expect((plan.name as string).startsWith('Telly')).toBe(true);
+  });
+
+  it('creates a destination-specific Kenya roaming offer without unrelated gaming', async () => {
+    const result = await orchestrator.ask({
+      message: 'Find a package for unlimited data in Kenya with Jio Hotstar',
+      customerId: 'cust-001',
+    });
+
+    const plan = result.recommendation?.plan as {
+      components: Array<{ name: string; description: string }>;
+    };
+    const componentNames = plan.components.map((component) => component.name);
+    const kenya = plan.components.find((component) => component.name === 'Kenya Roaming Pass');
+
+    expect(componentNames).toContain('Kenya Roaming Pass');
+    expect(componentNames).toContain('JioHotstar Subscription');
+    expect(componentNames.some((name) => name.includes('Gaming'))).toBe(false);
+    expect(kenya?.description).toContain('incoming calls ₹8/min');
+    expect(kenya?.description).toContain('outgoing calls ₹15/min');
+  });
+
+  it('never adds Gaming Turbo to a Bhutan OTT request unless gaming is requested', async () => {
+    const result = await orchestrator.ask({
+      message: 'Find a package in Bhutan with 50GB data unlimited call and can watch SonyLIV',
+      customerId: 'cust-003',
+    });
+
+    const plan = result.recommendation?.plan as {
+      name: string;
+      components: Array<{ name: string; description: string }>;
+    };
+    const componentNames = plan.components.map((component) => component.name);
+
+    expect(plan.name).toBe('Telly Bhutan Roaming Plan');
+    expect(componentNames).toContain('Bhutan Roaming Pass');
+    expect(componentNames).toContain('SonyLIV Subscription');
+    expect(componentNames.some((name) => /gaming|game/i.test(name))).toBe(false);
   });
 
   it('moves to the payment stage when the user confirms a plan', async () => {

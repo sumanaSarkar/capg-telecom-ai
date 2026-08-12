@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { AnalyticsModule } from '../agents/analytics/analytics.module';
 import { AutopilotModule } from '../agents/autopilot/autopilot.module';
 import { BillingModule } from '../agents/billing/billing.module';
+import { EsimModule } from '../agents/esim/esim.module';
 import { PaymentModule } from '../agents/payment/payment.module';
 import { PlanModule } from '../agents/plan/plan.module';
 import { ProfileModule } from '../agents/profile/profile.module';
@@ -29,6 +30,7 @@ import { TellyResponseTemplateService } from './telly-response-template.service'
     RoamingModule,
     BillingModule,
     AutopilotModule,
+    EsimModule,
   ],
   controllers: [OrchestratorController],
   providers: [OrchestratorService, RecommendationService, DecisionEngineService, CustomerIntelligenceService, CustomPlanComposerService, TellyResponseTemplateService],
