@@ -18,10 +18,12 @@ export class SpeechService {
     return this.client !== null;
   }
 
-  async transcribe(audioBuffer: Buffer, filename: string): Promise<string> {
+  async transcribe(audioBuffer: Buffer, filename: string, mimeType?: string): Promise<string> {
     if (!this.client) throw new Error('OpenAI client not initialised');
 
-    const file = await toFile(audioBuffer, filename, { type: 'audio/webm' });
+    const resolvedMimeType = mimeType && mimeType.startsWith('audio/') ? mimeType : this.inferMimeType(filename);
+    const safeFilename = filename.includes('.') ? filename : `${filename}.webm`;
+    const file = await toFile(audioBuffer, safeFilename, { type: resolvedMimeType });
     const transcription = await this.client.audio.transcriptions.create({
       file,
       model: 'whisper-1',
@@ -29,6 +31,15 @@ export class SpeechService {
     });
 
     return transcription.text;
+  }
+
+  private inferMimeType(filename: string): string {
+    const lower = filename.toLowerCase();
+    if (lower.endsWith('.wav')) return 'audio/wav';
+    if (lower.endsWith('.mp3') || lower.endsWith('.mpeg') || lower.endsWith('.mpga')) return 'audio/mpeg';
+    if (lower.endsWith('.m4a')) return 'audio/mp4';
+    if (lower.endsWith('.ogg')) return 'audio/ogg';
+    return 'audio/webm';
   }
 
   async synthesize(
@@ -45,5 +56,20 @@ export class SpeechService {
     });
 
     return response.arrayBuffer();
+  }
+
+  async createRealtimeSession(): Promise<Record<string, unknown>> {
+    if (!this.client) throw new Error('OpenAI client not initialised');
+
+    const model = process.env.OPENAI_REALTIME_MODEL || 'gpt-4o-realtime-preview-2024-12-17';
+    const session = await (this.client as any).beta.realtime.sessions.create({
+      model,
+      voice: 'nova',
+      modalities: ['text', 'audio'],
+      instructions:
+        'You are Telly, a helpful telecom assistant. Guide the customer with concise, natural spoken answers about plans, billing, roaming, support, and recharges.',
+    });
+
+    return session;
   }
 }

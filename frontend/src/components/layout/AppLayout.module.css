@@ -1,25 +1,28 @@
 .layout {
   display: flex;
   min-height: 100vh;
-  background: var(--app-bg);
+  background:
+    radial-gradient(circle at 92% 0%, rgba(94, 234, 212, 0.12), transparent 28rem),
+    var(--app-bg);
 }
 
 .sidebar {
-  width: 240px;
+  width: 248px;
   background: var(--sidebar-bg);
   color: var(--sidebar-text);
   display: flex;
   flex-direction: column;
   flex-shrink: 0;
+  box-shadow: 12px 0 32px rgba(24, 34, 48, 0.08);
 }
 
 .brand {
-  padding: 1.5rem 1.25rem;
+  padding: 1.55rem 1.35rem;
   font-size: 1.15rem;
   font-weight: 700;
   color: #ffffff;
   border-bottom: 1px solid var(--sidebar-border);
-  letter-spacing: 0.02em;
+  letter-spacing: -0.02em;
 }
 
 .brandAccent {
@@ -39,16 +42,17 @@
   align-items: center;
   gap: 0.7rem;
   padding: 0.65rem 0.9rem;
-  border-radius: 8px;
+  border-radius: 10px;
   color: var(--nav-link-text);
   text-decoration: none;
   font-size: 0.92rem;
-  transition: background 0.15s ease, color 0.15s ease;
+  transition: background 0.2s ease, color 0.2s ease, transform 0.2s ease;
 }
 
 .navLink:hover {
   background: var(--nav-link-hover-bg);
   color: #fff;
+  transform: translateX(2px);
 }
 
 .navLinkActive {
@@ -86,6 +90,48 @@
 
 .content {
   flex: 1;
-  padding: 2rem 2.5rem;
+  min-width: 0;
+  padding: clamp(1rem, 3vw, 2.5rem);
   overflow-y: auto;
+}
+
+@media (max-width: 760px) {
+  .layout {
+    display: block;
+  }
+
+  .sidebar {
+    width: 100%;
+    min-height: auto;
+  }
+
+  .brand {
+    padding: 1rem 1.1rem;
+  }
+
+  .nav {
+    flex-direction: row;
+    overflow-x: auto;
+    padding: 0.6rem;
+  }
+
+  .navLink {
+    flex: 0 0 auto;
+    white-space: nowrap;
+  }
+
+  .footer {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    padding: 0.7rem 1rem;
+  }
+
+  .username {
+    margin: 0;
+  }
+
+  .logoutButton {
+    width: auto;
+  }
 }

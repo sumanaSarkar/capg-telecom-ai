@@ -229,6 +229,74 @@ describe('OrchestratorService', () => {
     expect(result.finalMessage).toBe('I can help with that.');
   });
 
+  it('builds a custom telecom recommendation for lifestyle-based needs that do not mention telecom terms explicitly', async () => {
+    const result = await orchestrator.ask({
+      message: 'I need something that keeps everyone connected for work, entertainment, and travel.',
+      customerId: 'cust-001',
+    });
+
+    expect(result.stage).toBe('recommendation');
+    expect(result.recommendation).toBeDefined();
+    expect(result.finalMessage).toMatch(/Telly|plan|bundle|connected/i);
+  });
+
+  it('creates a Japan-specific travel plan when Japan is named', async () => {
+    const result = await orchestrator.ask({
+      message: 'I am going to Japan, what is the recharge plan for 10 days?',
+      customerId: 'cust-001',
+    });
+
+    const plan = result.recommendation?.plan as { name: string; components: Array<{ name: string }> };
+    expect(plan.name).toBe('Telly Japan Travel Plan');
+    expect(plan.components.some((component) => component.name === 'Japan Roaming Pass')).toBe(true);
+    expect(result.finalMessage).toMatch(/Japan/i);
+  });
+
+  it('creates a China-specific travel plan instead of generic recharge options', async () => {
+    const result = await orchestrator.ask({
+      message: 'I want to visit China for 12 days and need recharge options for calling and data',
+      customerId: 'cust-001',
+    });
+
+    const plan = result.recommendation?.plan as { name: string; components: Array<{ name: string }> };
+    expect(result.stage).toBe('recommendation');
+    expect(plan.name).toBe('Telly China Travel Plan');
+    expect(plan.components.some((component) => component.name === 'China Travel Roaming Pack')).toBe(true);
+    expect(result.finalMessage).toMatch(/China/i);
+  });
+
+  it('creates a personalized Manila plan instead of showing generic catalog plans', async () => {
+    const result = await orchestrator.ask({
+      message: 'I am visiting Manila for 9 days, show me recharge plans',
+      customerId: 'cust-001',
+    });
+
+    const plan = result.recommendation?.plan as { name: string; components: Array<{ name: string; description: string }> };
+    expect(result.stage).toBe('recommendation');
+    expect(plan.name).toBe('Telly Manila Travel Plan');
+    expect(plan.components.some((component) => component.name === 'Manila Travel Roaming Pack')).toBe(true);
+    expect(plan.components.some((component) => /Manila|Philippines/i.test(component.description))).toBe(true);
+    expect(result.finalMessage).toMatch(/Manila/i);
+    expect(result.finalMessage).toMatch(/Alex/i);
+  });
+
+  it.each([
+    ['Hawaii', 'Telly USA Hawaii Travel Plan', 'USA Hawaii Travel Roaming Pack', /USA|Hawaii/i],
+    ['Sydney', 'Telly Australia Sydney Travel Plan', 'Australia Sydney Travel Roaming Pack', /Australia|Sydney/i],
+    ['Austria', 'Telly Europe Austria Travel Plan', 'Europe Austria Travel Roaming Pack', /Europe|Austria/i],
+    ['Liverpool', 'Telly UK Liverpool Travel Plan', 'UK Liverpool Travel Roaming Pack', /UK|Liverpool/i],
+  ])('maps %s to the expected travel region', async (destination, planName, componentName, outputPattern) => {
+    const result = await orchestrator.ask({
+      message: `I am visiting ${destination} for 10 days, show me recharge plans`,
+      customerId: 'cust-001',
+    });
+
+    const plan = result.recommendation?.plan as { name: string; components: Array<{ name: string }> };
+    expect(plan.name).toBe(planName);
+    expect(plan.components.some((component) => component.name === componentName)).toBe(true);
+    expect(result.finalMessage).toMatch(outputPattern);
+  });
+
   it('keeps actionable telecom follow-ups out of generic chat fallback', async () => {
     await orchestrator.ask({
       message: 'pasta recipe',

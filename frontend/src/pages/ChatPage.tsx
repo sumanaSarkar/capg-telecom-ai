@@ -314,6 +314,7 @@ export function ChatPage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [listening, setListening] = useState(false);
+  const [voiceMode, setVoiceMode] = useState(false);
   const [voiceReady, setVoiceReady] = useState(false);
   const [backendHistory, setBackendHistory] = useState<AgentCommunicationTrace[]>([]);
   const [localHistory, setLocalHistory] = useState<AgentCommunicationTrace[]>([]);
@@ -326,6 +327,9 @@ export function ChatPage() {
   const [autopilotLoading, setAutopilotLoading] = useState(false);
   const threadRef = useRef<HTMLDivElement>(null);
   const recognitionRef = useRef<SpeechRecognitionInstance | null>(null);
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const audioChunksRef = useRef<Blob[]>([]);
+  const realtimeSessionRef = useRef<Record<string, unknown> | null>(null);
   const submitMessageRef = useRef<((message: string, shouldSpeak?: boolean) => Promise<void>) | null>(null);
 
   useEffect(() => {
@@ -490,7 +494,8 @@ export function ChatPage() {
         webkitSpeechRecognition?: SpeechRecognitionConstructor;
       }).webkitSpeechRecognition;
 
-    setVoiceReady(Boolean(recognitionConstructor));
+    const supportsMediaRecorder = typeof window !== 'undefined' && 'MediaRecorder' in window;
+    setVoiceReady(Boolean(recognitionConstructor || supportsMediaRecorder));
 
     if (!recognitionConstructor) {
       return;
@@ -498,7 +503,7 @@ export function ChatPage() {
 
     const recognition = new recognitionConstructor();
     recognition.lang = 'en-US';
-    recognition.continuous = false;
+    recognition.continuous = true;
     recognition.interimResults = false;
     recognition.onresult = (event) => {
       const transcript = Array.from({ length: event.results.length }, (_, index) => event.results[index])
@@ -516,6 +521,14 @@ export function ChatPage() {
       setError('Voice input was interrupted. Please try again.');
     };
     recognition.onend = () => {
+      if (voiceMode && !loading) {
+        setTimeout(() => {
+          if (voiceMode && recognitionRef.current && !loading) {
+            recognitionRef.current.start();
+          }
+        }, 300);
+        return;
+      }
       setListening(false);
     };
 
@@ -551,7 +564,7 @@ export function ChatPage() {
 
     try {
       const response = await api.ask(trimmed, customerId, 'ask');
-      appendAssistantResponse(response, shouldSpeak);
+      appendAssistantResponse(response, shouldSpeak || true);
     } catch (err) {
       if (axios.isAxiosError(err) && err.response?.status === 401) {
         setError('Your session has expired. Please sign in again.');
@@ -572,10 +585,54 @@ export function ChatPage() {
     await submitMessage(input);
   };
 
-  const toggleVoiceInput = () => {
-    if (input.trim() || loading) {
-      setError('Please send the current text message first before using voice input.');
-      return;
+  const startVoiceCapture = async () => {
+    if (typeof navigator !== 'undefined' && navigator.mediaDevices && typeof MediaRecorder !== 'undefined') {
+      try {
+        setError(null);
+        setVoiceMode(true);
+        setListening(true);
+
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
+          ? 'audio/webm;codecs=opus'
+          : 'audio/webm';
+
+        const recorder = new MediaRecorder(stream, { mimeType });
+        audioChunksRef.current = [];
+        recorder.ondataavailable = (event) => {
+          if (event.data.size > 0) {
+            audioChunksRef.current.push(event.data);
+          }
+        };
+
+        recorder.onstop = async () => {
+          const blob = new Blob(audioChunksRef.current, { type: mimeType || 'audio/webm' });
+          const extension = blob.type.includes('wav') ? 'wav' : blob.type.includes('mp4') ? 'm4a' : blob.type.includes('ogg') ? 'ogg' : 'webm';
+          stream.getTracks().forEach((track) => track.stop());
+
+          try {
+            const result = await api.transcribeAudio(blob, `voice.${extension}`);
+            const transcript = result.transcript?.trim();
+            if (transcript) {
+              await submitMessageRef.current?.(transcript, true);
+            }
+          } catch {
+            setError('Voice transcription failed. Please try again.');
+          } finally {
+            setListening(false);
+            if (voiceMode && !loading) {
+              setListening(true);
+            }
+          }
+        };
+
+        mediaRecorderRef.current = recorder;
+        recorder.start();
+        return;
+      } catch {
+        setListening(false);
+        setVoiceMode(false);
+      }
     }
 
     if (!voiceReady || !recognitionRef.current) {
@@ -583,14 +640,33 @@ export function ChatPage() {
       return;
     }
 
-    if (listening) {
+    setError(null);
+    setVoiceMode(true);
+    setListening(true);
+    recognitionRef.current.start();
+  };
+
+  const stopVoiceCapture = () => {
+    setVoiceMode(false);
+    setListening(false);
+    mediaRecorderRef.current?.stop();
+    if (recognitionRef.current) {
       recognitionRef.current.stop();
+    }
+  };
+
+  const toggleVoiceInput = async () => {
+    if (input.trim() || loading) {
+      setError('Please send the current text message first before using voice input.');
       return;
     }
 
-    setError(null);
-    setListening(true);
-    recognitionRef.current.start();
+    if (listening) {
+      stopVoiceCapture();
+      return;
+    }
+
+    await startVoiceCapture();
   };
 
   const handleConfirmPlan = async (messageId: string, response: OrchestratorResponse) => {
@@ -676,6 +752,7 @@ export function ChatPage() {
       recognitionRef.current.stop();
       setListening(false);
     }
+    setVoiceMode(false);
 
     setInput('');
     setError(null);
@@ -683,6 +760,25 @@ export function ChatPage() {
     setFlowStartMessageId(null);
     clearFlowClearMarker(customerId);
     clearChat();
+  };
+
+  const handleStartRealtimeVoice = async () => {
+    try {
+      setInput('');
+      const session = await api.createRealtimeSession();
+      realtimeSessionRef.current = session;
+      setError(null);
+      if (session && typeof session === 'object') {
+        const clientSecret = (session as { client_secret?: { value?: string } }).client_secret;
+        if (clientSecret?.value) {
+          setError('Realtime session ready. Starting live voice capture now.');
+        }
+      }
+      await startVoiceCapture();
+    } catch {
+      setError('Realtime voice session could not be created. Falling back to normal voice transcription.');
+      await startVoiceCapture();
+    }
   };
 
   const handleClearDashboard = async () => {
@@ -750,6 +846,14 @@ export function ChatPage() {
                 <button className={styles.newChatButton} type="button" onClick={handleStartNewChat}>
                   <Sparkles size={16} />
                   New chat
+                </button>
+                <button
+                  className={styles.newChatButton}
+                  type="button"
+                  onClick={handleStartRealtimeVoice}
+                >
+                  <Mic size={16} />
+                  Live Agent
                 </button>
               </div>
             </div>
@@ -1026,8 +1130,6 @@ export function ChatPage() {
                 key={node.key}
                 className={`${styles.flowBlock} ${styles[node.colorClass]}`}
                 style={{
-                  left: `${node.x}%`,
-                  top: `${node.y}%`,
                   animationDelay: `${index * 140}ms`,
                 }}
               >

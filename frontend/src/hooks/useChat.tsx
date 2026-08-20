@@ -1,5 +1,6 @@
 import { createContext, useContext, useEffect, useMemo, useState } from 'react';
 import type { Dispatch, ReactNode, SetStateAction } from 'react';
+import { api } from '../services/api';
 import type { OrchestratorResponse } from '../services/types';
 import { useAuth } from './useAuth';
 
@@ -27,13 +28,67 @@ const WELCOME_MESSAGE =
   "Hello! I'm Telly, your telecom assistant. How can I help you today? " +
   "Try: 'Show my past 2 months bill', 'Show all available plans', or 'What is my current plan?'";
 
-function speakAssistantMessage(response: OrchestratorResponse) {
-  if (typeof window === 'undefined' || typeof window.speechSynthesis === 'undefined') {
+function buildNaturalAgentVoiceReply(response: OrchestratorResponse): string {
+  const text = response.finalMessage?.trim() ?? '';
+  if (!text) {
+    return 'I can help with that. Tell me what you need from your telecom account.';
+  }
+
+  const normalizedText = text.replace(/\s+/g, ' ').trim();
+
+  if (response.recommendation?.plan) {
+    const plan = response.recommendation.plan;
+    const dataText = plan.dataGB === -1 ? 'unlimited data' : `${plan.dataGB} gigabytes of data`;
+    const callText = plan.callMinutes === -1 ? 'unlimited calls' : `${plan.callMinutes} minutes`;
+    return `I found ${plan.name}. It includes ${dataText} and ${callText}, and it costs $${plan.price.toFixed(2)} per month. Would you like me to walk you through it or proceed with this recommendation?`;
+  }
+
+  if (response.availablePlans?.length) {
+    const topPlan = response.availablePlans[0];
+    const label = topPlan?.name ?? 'your best option';
+    return `I found ${response.availablePlans.length} plans that match your needs. The strongest option is ${label}. I can compare the details with you and help you decide.`;
+  }
+
+  if (response.billingHistory?.length) {
+    const total = response.billingHistory.reduce((sum, item) => sum + Number(item.amount || 0), 0);
+    return `Your recent billing totals ${total.toFixed(2)} dollars across ${response.billingHistory.length} entries. I can break down the charges or suggest the next best action.`;
+  }
+
+  if (response.roamingPackages?.length) {
+    const bestPackage = response.roamingPackages[0];
+    return `I found ${response.roamingPackages.length} roaming package options. The top choice is ${bestPackage?.name ?? 'a roaming pack'} for ${bestPackage?.countries?.join(', ') ?? 'your destination'}.`;
+  }
+
+  if (response.paymentUrl) {
+    return 'Your payment step is ready. I can guide you through the payment flow and confirm the next action clearly.';
+  }
+
+  if (normalizedText.length > 220) {
+    return `${normalizedText.slice(0, 180).trim()}... I can explain the details in more depth if you want.`;
+  }
+
+  return normalizedText;
+}
+
+async function speakAssistantMessage(response: OrchestratorResponse, overrideText?: string) {
+  const text = (overrideText ?? response.finalMessage ?? '').trim();
+  if (!text) {
     return;
   }
 
-  const text = response.finalMessage?.trim();
-  if (!text) {
+  try {
+    const blob = await api.synthesizeSpeech(text, 'nova');
+    const audioUrl = URL.createObjectURL(blob);
+    const audio = new Audio(audioUrl);
+    audio.onended = () => URL.revokeObjectURL(audioUrl);
+    audio.onerror = () => URL.revokeObjectURL(audioUrl);
+    await audio.play();
+    return;
+  } catch {
+    // Fallback to browser speech synthesis if the OpenAI TTS route is unavailable.
+  }
+
+  if (typeof window === 'undefined' || typeof window.speechSynthesis === 'undefined') {
     return;
   }
 
@@ -129,7 +184,8 @@ export function ChatProvider({ children }: { children: ReactNode }) {
     setMessages((prev) => trimMessages([...prev, { id: crypto.randomUUID(), role: 'assistant', response }]));
 
     if (shouldSpeak) {
-      speakAssistantMessage(response);
+      const voiceText = buildNaturalAgentVoiceReply(response);
+      void speakAssistantMessage(response, voiceText);
     }
   };
 

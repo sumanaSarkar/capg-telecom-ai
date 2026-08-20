@@ -1,8 +1,9 @@
 .chatPage {
   display: grid;
-  grid-template-columns: minmax(0, 1.7fr) minmax(300px, 1fr);
-  gap: 1rem;
+  grid-template-columns: minmax(0, 1.55fr) minmax(320px, 0.9fr);
+  gap: clamp(1rem, 2vw, 1.5rem);
   height: calc(100vh - 4rem);
+  min-height: 620px;
 }
 
 .chatColumn {
@@ -12,12 +13,13 @@
 }
 
 .dashboardColumn {
-  border: 1px solid #dbe4ef;
-  border-radius: 18px;
-  background: linear-gradient(180deg, #ffffff 0%, #f8fbff 100%);
-  box-shadow: 0 12px 30px rgba(15, 23, 42, 0.06);
-  padding: 0.9rem;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  background: rgba(255, 255, 255, 0.82);
+  box-shadow: var(--shadow-md);
+  padding: clamp(0.75rem, 2vw, 1rem);
   overflow-y: auto;
+  min-width: 0;
 }
 
 .dashboardHeader {
@@ -102,10 +104,10 @@
 .flowBoard {
   position: relative;
   margin-bottom: 0.8rem;
-  border: 1px solid #d1d5ff;
-  border-radius: 16px;
-  background: linear-gradient(140deg, #efe8ff 0%, #e9f9ff 40%, #ecffe9 100%);
-  padding: 0.8rem;
+  border: 1px solid #c6e5e1;
+  border-radius: var(--radius-md);
+  background: linear-gradient(145deg, #eefcf9 0%, #f3f8ff 55%, #f8fbe9 100%);
+  padding: clamp(0.65rem, 2vw, 0.85rem);
   overflow: hidden;
 }
 
@@ -160,7 +162,13 @@
 
 .flowCanvas {
   position: relative;
-  min-height: 350px;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-auto-rows: minmax(84px, auto);
+  align-items: stretch;
+  gap: 0.8rem;
+  min-height: 0;
+  padding: 0.8rem;
   border-radius: 14px;
   border: 1px dashed rgba(15, 23, 42, 0.18);
   background:
@@ -174,6 +182,8 @@
   inset: 0;
   width: 100%;
   height: 100%;
+  pointer-events: none;
+  opacity: 0.2;
 }
 
 .flowConnector {
@@ -189,15 +199,21 @@
 
 .flowBlock {
   position: relative;
-  position: absolute;
-  width: clamp(110px, 21vw, 158px);
+  z-index: 1;
+  width: auto;
+  min-width: 0;
+  min-height: 84px;
   border-radius: 12px;
   border: 1px solid rgba(15, 23, 42, 0.12);
-  padding: 0.58rem 0.5rem 0.56rem;
+  padding: 0.7rem 0.65rem 0.65rem;
   transform: translateY(8px) scale(0.97);
   opacity: 0;
   animation: flowReveal 560ms cubic-bezier(0.16, 1, 0.3, 1) forwards;
   box-shadow: 0 12px 24px rgba(15, 23, 42, 0.1);
+}
+
+.flowBlock:nth-of-type(6) {
+  grid-column: 1 / -1;
 }
 
 .flowBlock h3 {
@@ -205,6 +221,7 @@
   font-size: 0.75rem;
   line-height: 1.2;
   color: #0f172a;
+  overflow-wrap: anywhere;
 }
 
 .flowBlock p {
@@ -212,6 +229,7 @@
   font-size: 0.66rem;
   line-height: 1.35;
   color: #334155;
+  overflow-wrap: anywhere;
 }
 
 .flowBlockNumber {
@@ -242,8 +260,9 @@
   position: absolute;
   width: 18px;
   height: 18px;
-  right: 26%;
-  top: 22%;
+  right: 48%;
+  top: 47%;
+  z-index: 2;
   border-radius: 50%;
   background: #111827;
   box-shadow:
@@ -254,8 +273,9 @@
 
 .flowLoop {
   position: absolute;
-  left: 39%;
-  top: 57%;
+  left: 28%;
+  top: 62%;
+  z-index: 0;
   width: 90px;
   height: 46px;
   border: 2px solid rgba(17, 24, 39, 0.92);
@@ -270,6 +290,7 @@
   margin: 0.55rem 0 0;
   font-size: 0.72rem;
   color: #475569;
+  line-height: 1.4;
 }
 
 .traceListHeading {
@@ -536,6 +557,8 @@
   display: flex;
   align-items: center;
   gap: 0.6rem;
+  flex-wrap: nowrap;
+  flex-shrink: 0;
 }
 
 .autopilotButton {
@@ -544,21 +567,24 @@
   gap: 0.4rem;
   border: none;
   border-radius: 999px;
-  padding: 0.55rem 0.9rem;
-  font-size: 0.8rem;
-  font-weight: 700;
+  min-height: 34px;
+  padding: 0.35rem 0.6rem;
+  font-size: 0.7rem;
+  font-weight: 650;
   cursor: pointer;
-  transition: background 0.15s, box-shadow 0.15s;
+  transition: background 0.2s, box-shadow 0.2s, transform 0.2s;
+  box-shadow: none;
 }
 
 .autopilotOn {
-  background: linear-gradient(90deg, #22c55e, #16a34a);
+  background: #0f766e;
   color: #fff;
-  box-shadow: 0 2px 8px rgba(22, 163, 74, 0.35);
+  box-shadow: 0 6px 16px rgba(15, 118, 110, 0.18);
 }
 
 .autopilotOn:hover {
-  background: linear-gradient(90deg, #16a34a, #15803d);
+  background: #115e59;
+  transform: translateY(-1px);
 }
 
 .autopilotOff {
@@ -580,24 +606,27 @@
   display: inline-flex;
   align-items: center;
   gap: 0.4rem;
-  background: #0f172a;
+  background: #2563eb;
   color: #fff;
   border: none;
-  border-radius: 999px;
-  padding: 0.65rem 0.95rem;
-  font-size: 0.85rem;
-  font-weight: 700;
+  border-radius: 12px;
+  min-height: 34px;
+  padding: 0.35rem 0.65rem;
+  font-size: 0.72rem;
+  font-weight: 650;
   cursor: pointer;
-  box-shadow: 0 10px 22px rgba(15, 23, 42, 0.12);
+  box-shadow: 0 6px 16px rgba(24, 34, 48, 0.12);
+  transition: background 0.2s, box-shadow 0.2s, transform 0.2s;
 }
 
 .newChatButton:hover {
-  background: #1e293b;
+  background: #1d4ed8;
+  transform: translateY(-1px);
 }
 
 .newChatButton:focus-visible {
-  outline: none;
-  box-shadow: 0 0 0 3px rgba(14, 165, 233, 0.2), 0 10px 22px rgba(15, 23, 42, 0.12);
+  outline: 3px solid var(--focus-ring);
+  outline-offset: 2px;
 }
 
 .thread {
@@ -674,19 +703,19 @@
 .input {
   width: 100%;
   padding: 0.7rem 1rem;
-  border-radius: 24px;
-  border: 1px solid #cbd5e1;
+  border-radius: 12px;
+  border: 1px solid var(--line);
   font-size: 0.92rem;
 }
 
 .input:focus {
   outline: none;
-  border-color: #0ea5e9;
-  box-shadow: 0 0 0 3px rgba(14, 165, 233, 0.15);
+  border-color: var(--accent-bright);
+  box-shadow: 0 0 0 3px var(--focus-ring);
 }
 
 .sendButton {
-  background: #0ea5e9;
+  background: var(--accent);
   color: #fff;
   border: none;
   width: 44px;
@@ -700,13 +729,13 @@
 }
 
 .sendButton:hover {
-  background: #0284c7;
+  background: #115e59;
 }
 
 .voiceButton {
   background: #ffffff;
   color: #0f172a;
-  border: 1px solid #cbd5e1;
+  border: 1px solid var(--line);
   width: 44px;
   height: 44px;
   border-radius: 50%;
@@ -718,7 +747,7 @@
 }
 
 .voiceButton:hover {
-  background: #f8fafc;
+  background: #ecfdf5;
 }
 
 .voiceButtonActive {
@@ -823,7 +852,8 @@
   }
 
   .flowBlock {
-    width: clamp(98px, 28vw, 130px);
+    width: auto;
+    min-height: 78px;
     padding: 0.5rem;
   }
 
@@ -832,5 +862,36 @@
     height: 34px;
     left: 36%;
     top: 60%;
+  }
+}
+
+@media (max-width: 560px) {
+  .chatPage {
+    min-height: 0;
+  }
+
+  .headerTop {
+    flex-direction: column;
+  }
+
+  .headerActions {
+    width: 100%;
+    overflow-x: auto;
+    padding-bottom: 0.2rem;
+  }
+
+  .flowCanvas {
+    grid-template-columns: 1fr;
+    grid-auto-rows: auto;
+  }
+
+  .flowBlock {
+    min-height: 0;
+  }
+
+  .flowSvg,
+  .flowLoop,
+  .flowSpark {
+    display: none;
   }
 }

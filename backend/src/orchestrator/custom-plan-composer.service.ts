@@ -167,11 +167,78 @@ export class CustomPlanComposerService {
   }
 
   private resolveRoamingDestination(normalized: string): string | undefined {
-    const destinations = ['kenya', 'bhutan', 'usa', 'united states', 'uk', 'united kingdom', 'uae', 'dubai', 'france', 'germany', 'spain'];
+    const destinations = [
+      'hawaii', 'sydney', 'austria', 'liverpool', 'manila', 'philippines', 'china', 'asia', 'japan', 'tokyo', 'osaka', 'kenya', 'bhutan', 'usa', 'united states',
+      'uk', 'united kingdom', 'uae', 'dubai', 'france', 'germany', 'spain',
+    ];
     return destinations.find((destination) => normalized.includes(destination));
   }
 
   private buildRoamingComponent(destination: string): CustomPlanComponent {
+    if (destination === 'hawaii') {
+      return {
+        name: 'USA Hawaii Travel Roaming Pack',
+        description: 'USA travel connectivity for Hawaii with roaming data, calling, SMS, and usage alerts tailored to your trip.',
+        monthlyPrice: 399,
+        tag: 'usa-hawaii-roaming',
+      };
+    }
+
+    if (destination === 'sydney') {
+      return {
+        name: 'Australia Sydney Travel Roaming Pack',
+        description: 'Australia travel connectivity for Sydney with roaming data, calling, SMS, and usage alerts tailored to your trip.',
+        monthlyPrice: 399,
+        tag: 'australia-sydney-roaming',
+      };
+    }
+
+    if (destination === 'austria') {
+      return {
+        name: 'Europe Austria Travel Roaming Pack',
+        description: 'Europe travel connectivity for Austria with roaming data, calling, SMS, and usage alerts tailored to your trip.',
+        monthlyPrice: 399,
+        tag: 'europe-austria-roaming',
+      };
+    }
+
+    if (destination === 'liverpool') {
+      return {
+        name: 'UK Liverpool Travel Roaming Pack',
+        description: 'UK travel connectivity for Liverpool with roaming data, calling, SMS, and usage alerts tailored to your trip.',
+        monthlyPrice: 399,
+        tag: 'uk-liverpool-roaming',
+      };
+    }
+
+    if (destination === 'manila' || destination === 'philippines') {
+      return {
+        name: 'Manila Travel Roaming Pack',
+        description: 'Philippines travel connectivity with roaming data, calling, SMS, and usage alerts tailored to your Manila trip.',
+        monthlyPrice: 399,
+        tag: 'manila-roaming',
+      };
+    }
+
+    if (destination === 'china' || destination === 'asia') {
+      const label = destination === 'china' ? 'China' : 'Asia';
+      return {
+        name: `${label} Travel Roaming Pack`,
+        description: `${label} travel connectivity with roaming data, calling, SMS, and usage alerts for your trip.`,
+        monthlyPrice: 399,
+        tag: `${destination}-roaming`,
+      };
+    }
+
+    if (destination === 'japan' || destination === 'tokyo' || destination === 'osaka') {
+      return {
+        name: 'Japan Roaming Pass',
+        description: 'Japan travel connectivity with roaming data, calls, SMS, and usage alerts for your trip.',
+        monthlyPrice: 399,
+        tag: 'japan-roaming',
+      };
+    }
+
     if (destination === 'kenya') {
       return {
         name: 'Kenya Roaming Pass',
@@ -282,7 +349,23 @@ export class CustomPlanComposerService {
     const hasRoaming = components.some((c) => /roam|travel/i.test(c.tag));
     const hasKenyaRoaming = components.some((c) => c.tag === 'kenya-roaming');
     const hasBhutanRoaming = components.some((c) => c.tag === 'bhutan-roaming');
+    const hasJapanRoaming = components.some((c) => c.tag === 'japan-roaming');
+    const hasChinaRoaming = components.some((c) => c.tag === 'china-roaming');
+    const hasAsiaRoaming = components.some((c) => c.tag === 'asia-roaming');
+    const hasManilaRoaming = components.some((c) => c.tag === 'manila-roaming');
+    const hasHawaiiRoaming = components.some((c) => c.tag === 'usa-hawaii-roaming');
+    const hasSydneyRoaming = components.some((c) => c.tag === 'australia-sydney-roaming');
+    const hasAustriaRoaming = components.some((c) => c.tag === 'europe-austria-roaming');
+    const hasLiverpoolRoaming = components.some((c) => c.tag === 'uk-liverpool-roaming');
 
+    if (hasHawaiiRoaming) return 'Telly USA Hawaii Travel Plan';
+    if (hasSydneyRoaming) return 'Telly Australia Sydney Travel Plan';
+    if (hasAustriaRoaming) return 'Telly Europe Austria Travel Plan';
+    if (hasLiverpoolRoaming) return 'Telly UK Liverpool Travel Plan';
+    if (hasManilaRoaming) return 'Telly Manila Travel Plan';
+    if (hasJapanRoaming) return 'Telly Japan Travel Plan';
+    if (hasChinaRoaming) return 'Telly China Travel Plan';
+    if (hasAsiaRoaming) return 'Telly Asia Travel Plan';
     if (hasKenyaRoaming) return 'Telly Kenya Roaming Plan';
     if (hasBhutanRoaming) return 'Telly Bhutan Roaming Plan';
     if (intelligence.segment === 'family') return 'Telly Family Unlimited Bundle';

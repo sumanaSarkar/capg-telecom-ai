@@ -13,6 +13,7 @@ import { SupportModule } from './agents/support/support.module';
 import { AuthModule } from './auth/auth.module';
 import { LlmModule } from './llm/llm.module';
 import { OrchestratorModule } from './orchestrator/orchestrator.module';
+import { SpeechModule } from './speech/speech.module';
 
 @Module({
   imports: [
@@ -30,6 +31,7 @@ import { OrchestratorModule } from './orchestrator/orchestrator.module';
     EsimModule,
     AutopilotModule,
     OrchestratorModule,
+    SpeechModule,
   ],
   controllers: [],
   providers: [],

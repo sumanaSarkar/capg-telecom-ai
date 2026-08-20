@@ -43,6 +43,12 @@ describe('Auth (e2e)', () => {
       .expect(401);
   });
 
+  it('/speech/stt (POST) exists and validates missing audio', async () => {
+    await request(app.getHttpServer())
+      .post('/speech/stt')
+      .expect(400);
+  });
+
   afterEach(async () => {
     await app.close();
   });

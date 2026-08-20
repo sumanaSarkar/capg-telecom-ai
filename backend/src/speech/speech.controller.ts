@@ -46,7 +46,11 @@ export class SpeechController {
       );
     }
 
-    const transcript = await this.speechService.transcribe(file.buffer, file.originalname);
+    const transcript = await this.speechService.transcribe(
+      file.buffer,
+      file.originalname,
+      file.mimetype,
+    );
     return { transcript };
   }
 
@@ -68,5 +72,18 @@ export class SpeechController {
     res.setHeader('Content-Type', 'audio/mpeg');
     res.setHeader('Content-Length', audioBuffer.byteLength);
     res.end(Buffer.from(audioBuffer));
+  }
+
+  @Post('realtime/session')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Create an OpenAI Realtime live session for browser voice conversations' })
+  async createRealtimeSession(): Promise<Record<string, unknown>> {
+    if (!this.speechService.isAvailable()) {
+      throw new ServiceUnavailableException(
+        'Real-time voice requires OPENAI_API_KEY and a supported Realtime model.',
+      );
+    }
+
+    return this.speechService.createRealtimeSession();
   }
 }

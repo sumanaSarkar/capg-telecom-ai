@@ -176,6 +176,27 @@ export const api = {
     const { data } = await apiClient.delete<AutopilotSettings>(`/autopilot/${customerId}/disable`);
     return data;
   },
+
+  transcribeAudio: async (audioBlob: Blob, filename = 'voice.webm'): Promise<{ transcript: string }> => {
+    const formData = new FormData();
+    formData.append('audio', audioBlob, filename);
+
+    const { data } = await apiClient.post<{ transcript: string }>('/speech/stt', formData, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    });
+
+    return data;
+  },
+
+  synthesizeSpeech: async (text: string, voice: 'alloy' | 'echo' | 'fable' | 'onyx' | 'nova' | 'shimmer' = 'nova'): Promise<Blob> => {
+    const { data } = await apiClient.post('/speech/tts', { text, voice }, { responseType: 'arraybuffer' });
+    return new Blob([data], { type: 'audio/mpeg' });
+  },
+
+  createRealtimeSession: async (): Promise<Record<string, unknown>> => {
+    const { data } = await apiClient.post<Record<string, unknown>>('/speech/realtime/session');
+    return data;
+  },
 };
 
 export default api;

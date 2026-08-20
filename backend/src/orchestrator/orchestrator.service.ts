@@ -187,6 +187,11 @@ export class OrchestratorService {
     return /\b(available|all|list|show|compare)\b.*\brecharge\b.*\boptions?\b/i.test(message) || /\brecharge\s+options\b/i.test(message) || /\btop\s*up\s+options\b/i.test(message);
   }
 
+  private isDestinationTravelRequest(message: string): boolean {
+    return /\b(hawaii|sydney|austria|liverpool|manila|philippines|china|asia|japan|tokyo|osaka|kenya|bhutan|usa|united states|uk|united kingdom|uae|dubai|france|germany|spain)\b/i.test(message) &&
+      /\b(travel|trip|visit|abroad|roaming|recharge|package|calling|data|days?)\b/i.test(message);
+  }
+
   private isRoamingPackagesRequest(message: string): boolean {
     return /\b(available|all|list|show|compare)\b.*\broaming\b.*\bpackages?\b/i.test(message) || /\broaming\s+packages?\b/i.test(message) || /\broaming\s+options\b/i.test(message);
   }
@@ -203,6 +208,22 @@ export class OrchestratorService {
       'set me up', 'set up', 'upgrade', 'recommend', 'suggest',
     ];
     return telecomTerms.some((term) => normalized.includes(term));
+  }
+
+  private isLifestyleTelecomNeed(message: string): boolean {
+    const normalized = this.normalizeText(message);
+    const lifestyleSignals = [
+      'connected', 'connectivity', 'stay connected', 'family connected', 'work from home',
+      'entertainment', 'streaming', 'watch', 'calls', 'data usage', 'internet',
+      'travel', 'roaming', 'abroad', 'international', 'household', 'family', 'work',
+      'mobile', 'network', 'signal', 'wifi', 'hotspot', 'business', 'professional',
+    ];
+
+    const hasLifestyleSignal = lifestyleSignals.some((term) => normalized.includes(term));
+    const hasNeedVerb = /(need|want|looking for|need something|help me|get|find|choose|pick)/.test(normalized);
+    const hasMultiUseContext = /(work|travel|entertainment|stream|family|household|business|gaming)/.test(normalized);
+
+    return hasLifestyleSignal && (hasNeedVerb || hasMultiUseContext);
   }
 
   private isFollowUpConversationRequest(message: string): boolean {
@@ -370,10 +391,11 @@ export class OrchestratorService {
 
     const hasExistingConversation = (this.conversationHistoryByCustomer.get(dto.customerId) ?? []).length > 0;
     const isTelecomRelated = this.isTelecomRelatedRequest(dto.message);
+    const isLifestyleTelecomNeed = this.isLifestyleTelecomNeed(dto.message);
     const isFollowUp = this.isFollowUpConversationRequest(dto.message);
     const isActionableTelecom = this.isActionableTelecomRequest(dto.message);
     const shouldUseConversationChat =
-      !isTelecomRelated ||
+      (!isTelecomRelated && !isLifestyleTelecomNeed) ||
       (hasExistingConversation && isFollowUp && !isActionableTelecom);
 
     if (shouldUseConversationChat) {
@@ -429,7 +451,7 @@ export class OrchestratorService {
       };
     }
 
-    if (this.isAvailablePlansRequest(dto.message)) {
+    if (this.isAvailablePlansRequest(dto.message) && !this.isDestinationTravelRequest(dto.message)) {
       const availablePlans = this.planService.getPlans(dto.customerId);
       const finalMessage = await this.llmProvider.generateResponse(
         { count: availablePlans.length },
@@ -448,7 +470,7 @@ export class OrchestratorService {
       };
     }
 
-    if (this.isRechargeOptionsRequest(dto.message)) {
+    if (this.isRechargeOptionsRequest(dto.message) && !this.isDestinationTravelRequest(dto.message)) {
       const rechargeOptions = this.planService.getPlans(dto.customerId);
       const finalMessage = await this.llmProvider.generateResponse(
         { count: rechargeOptions.length },
