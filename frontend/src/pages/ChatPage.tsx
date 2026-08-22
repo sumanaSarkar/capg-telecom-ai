@@ -544,8 +544,12 @@ export function ChatPage() {
     };
   }, []);
 
-  const appendAssistantResponse = (response: OrchestratorResponse, shouldSpeak = false) => {
-    appendAssistantMessage(response, shouldSpeak);
+  const appendAssistantResponse = (
+    response: OrchestratorResponse,
+    shouldSpeak = false,
+    sourceUserText?: string,
+  ) => {
+    appendAssistantMessage(response, shouldSpeak, sourceUserText);
   };
 
   const markActioned = (id: string) => {
@@ -568,7 +572,7 @@ export function ChatPage() {
 
     try {
       const response = await api.ask(trimmed, customerId, 'ask');
-      appendAssistantResponse(response, shouldSpeak);
+      appendAssistantResponse(response, shouldSpeak, trimmed);
     } catch (err) {
       if (axios.isAxiosError(err) && err.response?.status === 401) {
         setError('Your session has expired. Please sign in again.');

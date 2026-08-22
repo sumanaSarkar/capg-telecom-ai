@@ -18,7 +18,11 @@ export interface ChatMessage {
 interface ChatContextValue {
   messages: ChatMessage[];
   setMessages: Dispatch<SetStateAction<ChatMessage[]>>;
-  appendAssistantMessage: (response: OrchestratorResponse, shouldSpeak?: boolean) => void;
+  appendAssistantMessage: (
+    response: OrchestratorResponse,
+    shouldSpeak?: boolean,
+    sourceUserText?: string,
+  ) => void;
   clearChat: () => void;
 }
 
@@ -50,6 +54,34 @@ function clampWords(text: string, maxWords: number): string {
     return text.trim();
   }
   return `${words.slice(0, maxWords).join(' ')}...`;
+}
+
+function detectDeclaredGender(sourceUserText?: string): 'male' | 'female' | null {
+  const text = (sourceUserText ?? '').toLowerCase();
+  if (!text) {
+    return null;
+  }
+
+  if (/\b(i\s*am|i'm|im)\s+(a\s+)?(woman|female|girl|lady)\b/.test(text)) {
+    return 'female';
+  }
+
+  if (/\b(i\s*am|i'm|im)\s+(a\s+)?(man|male|boy|guy)\b/.test(text)) {
+    return 'male';
+  }
+
+  return null;
+}
+
+function pickOppositeVoice(sourceUserText?: string): 'alloy' | 'echo' | 'fable' | 'onyx' | 'nova' | 'shimmer' {
+  const declaredGender = detectDeclaredGender(sourceUserText);
+  if (declaredGender === 'male') {
+    return 'shimmer';
+  }
+  if (declaredGender === 'female') {
+    return 'onyx';
+  }
+  return 'nova';
 }
 
 function buildNaturalAgentVoiceReply(response: OrchestratorResponse): string {
@@ -112,14 +144,19 @@ function buildNaturalAgentVoiceReply(response: OrchestratorResponse): string {
   return `Got it. ${summary} Would you like me to take the next step now?`;
 }
 
-async function speakAssistantMessage(response: OrchestratorResponse, overrideText?: string) {
+async function speakAssistantMessage(
+  response: OrchestratorResponse,
+  overrideText?: string,
+  sourceUserText?: string,
+) {
   const text = (overrideText ?? response.finalMessage ?? '').trim();
   if (!text) {
     return;
   }
 
   try {
-    const blob = await api.synthesizeSpeech(text, 'nova');
+    const voice = pickOppositeVoice(sourceUserText);
+    const blob = await api.synthesizeSpeech(text, voice);
     const audioUrl = URL.createObjectURL(blob);
     const audio = new Audio(audioUrl);
     audio.onended = () => URL.revokeObjectURL(audioUrl);
@@ -222,12 +259,16 @@ export function ChatProvider({ children }: { children: ReactNode }) {
     window.localStorage.setItem(getStorageKey(customerId), JSON.stringify(trimMessages(messages)));
   }, [messages, customerId]);
 
-  const appendAssistantMessage = (response: OrchestratorResponse, shouldSpeak = false) => {
+  const appendAssistantMessage = (
+    response: OrchestratorResponse,
+    shouldSpeak = false,
+    sourceUserText?: string,
+  ) => {
     setMessages((prev) => trimMessages([...prev, { id: crypto.randomUUID(), role: 'assistant', response }]));
 
     if (shouldSpeak) {
       const voiceText = buildNaturalAgentVoiceReply(response);
-      void speakAssistantMessage(response, voiceText);
+      void speakAssistantMessage(response, voiceText, sourceUserText);
     }
   };
 
