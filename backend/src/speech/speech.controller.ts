@@ -22,6 +22,10 @@ export class TtsDto {
   voice?: 'alloy' | 'echo' | 'fable' | 'onyx' | 'nova' | 'shimmer';
 }
 
+export class RealtimeSessionDto {
+  customerId?: string;
+}
+
 @ApiTags('Speech')
 @UseGuards(JwtAuthGuard)
 @Controller('speech')
@@ -77,13 +81,13 @@ export class SpeechController {
   @Post('realtime/session')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Create an OpenAI Realtime live session for browser voice conversations' })
-  async createRealtimeSession(): Promise<Record<string, unknown>> {
+  async createRealtimeSession(@Body() dto: RealtimeSessionDto): Promise<Record<string, unknown>> {
     if (!this.speechService.isAvailable()) {
       throw new ServiceUnavailableException(
         'Real-time voice requires OPENAI_API_KEY and a supported Realtime model.',
       );
     }
 
-    return this.speechService.createRealtimeSession();
+    return this.speechService.createRealtimeSession(dto.customerId);
   }
 }

@@ -193,8 +193,8 @@ export const api = {
     return new Blob([data], { type: 'audio/mpeg' });
   },
 
-  createRealtimeSession: async (): Promise<Record<string, unknown>> => {
-    const { data } = await apiClient.post<Record<string, unknown>>('/speech/realtime/session');
+  createRealtimeSession: async (customerId: string): Promise<Record<string, unknown>> => {
+    const { data } = await apiClient.post<Record<string, unknown>>('/speech/realtime/session', { customerId });
     return data;
   },
 };

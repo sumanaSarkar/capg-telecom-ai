@@ -28,7 +28,7 @@ export class OpenAiLlmProvider implements ILlmProvider {
   private readonly fallback = new MockLlmProvider();
   private readonly model: string;
 
-  constructor(apiKey: string, model = 'gpt-4o-mini') {
+  constructor(apiKey: string, model = 'gpt-4.1-mini') {
     this.client = new OpenAI({ apiKey });
     this.model = model;
     this.logger.log(`OpenAI LLM provider initialised (model: ${this.model}).`);

@@ -330,6 +330,10 @@ export function ChatPage() {
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
   const realtimeSessionRef = useRef<Record<string, unknown> | null>(null);
+  const realtimePeerRef = useRef<RTCPeerConnection | null>(null);
+  const realtimeChannelRef = useRef<RTCDataChannel | null>(null);
+  const realtimeStreamRef = useRef<MediaStream | null>(null);
+  const realtimeAudioRef = useRef<HTMLAudioElement | null>(null);
   const submitMessageRef = useRef<((message: string, shouldSpeak?: boolean) => Promise<void>) | null>(null);
 
   useEffect(() => {
@@ -564,7 +568,7 @@ export function ChatPage() {
 
     try {
       const response = await api.ask(trimmed, customerId, 'ask');
-      appendAssistantResponse(response, shouldSpeak || true);
+      appendAssistantResponse(response, shouldSpeak);
     } catch (err) {
       if (axios.isAxiosError(err) && err.response?.status === 401) {
         setError('Your session has expired. Please sign in again.');
@@ -579,6 +583,8 @@ export function ChatPage() {
   useEffect(() => {
     submitMessageRef.current = submitMessage;
   }, [submitMessage]);
+
+  useEffect(() => () => stopRealtimeVoice(), []);
 
   const handleSend = async (event: FormEvent) => {
     event.preventDefault();
@@ -753,6 +759,7 @@ export function ChatPage() {
       setListening(false);
     }
     setVoiceMode(false);
+    stopRealtimeVoice();
 
     setInput('');
     setError(null);
@@ -762,22 +769,83 @@ export function ChatPage() {
     clearChat();
   };
 
+  const stopRealtimeVoice = () => {
+    realtimeChannelRef.current?.close();
+    realtimePeerRef.current?.close();
+    realtimeStreamRef.current?.getTracks().forEach((track) => track.stop());
+    if (realtimeAudioRef.current) {
+      realtimeAudioRef.current.srcObject = null;
+    }
+    realtimeChannelRef.current = null;
+    realtimePeerRef.current = null;
+    realtimeStreamRef.current = null;
+    setVoiceMode(false);
+    setListening(false);
+  };
+
   const handleStartRealtimeVoice = async () => {
+    if (voiceMode) {
+      stopRealtimeVoice();
+      return;
+    }
+
     try {
       setInput('');
-      const session = await api.createRealtimeSession();
-      realtimeSessionRef.current = session;
       setError(null);
-      if (session && typeof session === 'object') {
-        const clientSecret = (session as { client_secret?: { value?: string } }).client_secret;
-        if (clientSecret?.value) {
-          setError('Realtime session ready. Starting live voice capture now.');
-        }
+      const session = await api.createRealtimeSession(customerId);
+      realtimeSessionRef.current = session;
+      const clientSecret = (session as { client_secret?: { value?: string } }).client_secret?.value;
+      if (!clientSecret) {
+        throw new Error('Realtime session did not return a client secret.');
       }
-      await startVoiceCapture();
-    } catch {
-      setError('Realtime voice session could not be created. Falling back to normal voice transcription.');
-      await startVoiceCapture();
+
+      const peer = new RTCPeerConnection();
+      const audio = new Audio();
+      audio.autoplay = true;
+      peer.ontrack = (event) => {
+        audio.srcObject = event.streams[0];
+        void audio.play().catch(() => {});
+      };
+
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      realtimeStreamRef.current = stream;
+      stream.getTracks().forEach((track) => peer.addTrack(track, stream));
+      const channel = peer.createDataChannel('oai-events');
+      channel.onmessage = (event) => {
+        const realtimeEvent = JSON.parse(event.data) as {
+          type?: string;
+          transcript?: string;
+        };
+        if (realtimeEvent.type === 'conversation.item.input_audio_transcription.completed' && realtimeEvent.transcript?.trim()) {
+          setMessages((prev) => [...prev, { id: crypto.randomUUID(), role: 'user', text: realtimeEvent.transcript!.trim() }]);
+        }
+        if (realtimeEvent.type === 'response.audio_transcript.done' && realtimeEvent.transcript?.trim()) {
+          setMessages((prev) => [...prev, { id: crypto.randomUUID(), role: 'assistant', text: realtimeEvent.transcript!.trim() }]);
+        }
+      };
+
+      const offer = await peer.createOffer();
+      await peer.setLocalDescription(offer);
+      const answer = await fetch('https://api.openai.com/v1/realtime/calls', {
+        method: 'POST',
+        body: offer.sdp,
+        headers: {
+          Authorization: `Bearer ${clientSecret}`,
+          'Content-Type': 'application/sdp',
+        },
+      });
+      if (!answer.ok) {
+        throw new Error(`Realtime connection failed (${answer.status}).`);
+      }
+      await peer.setRemoteDescription({ type: 'answer', sdp: await answer.text() });
+      realtimePeerRef.current = peer;
+      realtimeChannelRef.current = channel;
+      realtimeAudioRef.current = audio;
+      setVoiceMode(true);
+      setListening(true);
+    } catch (err) {
+      stopRealtimeVoice();
+      setError(err instanceof Error ? err.message : 'Live voice could not be started. Please try again.');
     }
   };
 
@@ -1088,11 +1156,6 @@ export function ChatPage() {
         </div>
 
         <section className={styles.flowBoard} aria-label="Agent flow diagram">
-          <div className={styles.flowStickerOne} />
-          <div className={styles.flowStickerTwo} />
-          <div className={styles.flowStickerThree} />
-          <div className={styles.flowStickerFour} />
-
           <div className={styles.flowCanvas}>
             <svg
               className={styles.flowSvg}

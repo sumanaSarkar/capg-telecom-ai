@@ -156,6 +156,27 @@ export class OrchestratorService {
       /\b(e\s*sim|esim)\b.*\b(is|enabled|active|on|off|disabled)\b/i.test(normalized);
   }
 
+  private isSimSecurityRequest(message: string): boolean {
+    const normalized = this.normalizeText(message);
+    const simTerm = /\b(sim|number|line)\b/i.test(normalized);
+    const blockTerm =
+      /\b(block|lock|disable|deactivate|suspend|stop|secure|lost|stolen|theft|compromise|fraud)\b/i.test(
+        normalized,
+      );
+    return simTerm && blockTerm;
+  }
+
+  private isPhoneNumberVisibilityRequest(message: string): boolean {
+    const normalized = this.normalizeText(message);
+    const asksAboutPhoneNumber =
+      /\b(phone\s*number|mobile\s*number|my\s*number|number)\b/i.test(normalized);
+    const asksVisibility =
+      /\b(see|know|find|show|read|detect|access|view)\b/i.test(normalized) ||
+      /\b(can t\s+you|cant\s+you|can\s+you)\b/i.test(normalized);
+    const referencesNetwork = /\b(network|sim|line|carrier|operator)\b/i.test(normalized);
+    return asksAboutPhoneNumber && (asksVisibility || referencesNetwork);
+  }
+
   private isEsimActivationFollowUp(customerId: string, message: string): boolean {
     const history = this.conversationHistoryByCustomer.get(customerId) ?? [];
     const lastAssistantMessage = [...history].reverse().find((turn) => turn.role === 'assistant')?.content ?? '';
@@ -377,6 +398,14 @@ export class OrchestratorService {
     intent: string,
     agents: string[],
   ): Promise<OrchestratorResponse> {
+    if (this.isSimSecurityRequest(dto.message)) {
+      return this.handleSimSecurityRequest(dto, intent, agents);
+    }
+
+    if (this.isPhoneNumberVisibilityRequest(dto.message)) {
+      return this.handlePhoneNumberVisibilityRequest(dto, intent, agents);
+    }
+
     if (this.isEsimStatusRequest(dto.message)) {
       return this.handleEsimStatus(dto, intent, agents);
     }
@@ -637,6 +666,67 @@ export class OrchestratorService {
       finalMessage,
       stage: 'complete',
       context: { esimStatus },
+    };
+  }
+
+  private async handleSimSecurityRequest(
+    dto: AskDto,
+    intent: string,
+    agents: string[],
+  ): Promise<OrchestratorResponse> {
+    const finalMessage =
+      "I understand this is stressful. I can help secure your SIM right away. " +
+      "I can help you block the SIM immediately, suspend outgoing services, " +
+      "raise a high-priority support request, and guide replacement SIM steps. " +
+      "Please confirm: should I create a high-priority SIM block support ticket now?";
+
+    this.appendConversationTurn(dto.customerId, { role: 'user', content: dto.message });
+    this.appendConversationTurn(dto.customerId, { role: 'assistant', content: finalMessage });
+
+    return {
+      intent: intent || 'sim_security_support',
+      agents: agents.includes('support') ? agents : [...agents, 'support'],
+      finalMessage,
+      stage: 'complete',
+      context: {
+        securityFlow: 'sim_block',
+        nextActions: [
+          'block_sim',
+          'suspend_outgoing',
+          'create_support_ticket',
+          'replacement_sim_guidance',
+        ],
+      },
+    };
+  }
+
+  private async handlePhoneNumberVisibilityRequest(
+    dto: AskDto,
+    intent: string,
+    agents: string[],
+  ): Promise<OrchestratorResponse> {
+    const profile = this.profileService.getProfile(dto.customerId);
+    const masked = profile.phone.length > 4
+      ? `${'*'.repeat(Math.max(0, profile.phone.length - 4))}${profile.phone.slice(-4)}`
+      : profile.phone;
+
+    const finalMessage =
+      `Good question. I cannot read live network metadata directly, but I can access your registered account profile. ` +
+      `Your number on file ends with ${masked.slice(-4)}. ` +
+      `If you want, I can help you verify the full number securely or proceed to SIM block/replacement support right away.`;
+
+    this.appendConversationTurn(dto.customerId, { role: 'user', content: dto.message });
+    this.appendConversationTurn(dto.customerId, { role: 'assistant', content: finalMessage });
+
+    return {
+      intent: intent || 'profile_number_visibility',
+      agents: agents.includes('profile') ? agents : [...agents, 'profile'],
+      finalMessage,
+      stage: 'complete',
+      context: {
+        profilePhoneLast4: profile.phone.slice(-4),
+        canAccessLiveNetworkMetadata: false,
+      },
     };
   }
 

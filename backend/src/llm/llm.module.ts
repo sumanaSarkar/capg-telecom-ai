@@ -10,7 +10,7 @@ import { OpenAiLlmProvider } from './openai-llm.provider';
       useFactory: () => {
         const providerName = (process.env.LLM_PROVIDER || 'mock').toLowerCase();
         const apiKey = process.env.OPENAI_API_KEY ?? '';
-        const model = process.env.OPENAI_MODEL || 'gpt-4o-mini';
+        const model = process.env.OPENAI_MODEL || 'gpt-4.1-mini';
         if (providerName === 'openai' && apiKey) {
           return new OpenAiLlmProvider(apiKey, model);
         }

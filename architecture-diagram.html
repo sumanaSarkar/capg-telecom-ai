@@ -188,11 +188,13 @@ flowchart LR
       AUTH[Auth Module\nLogin + JWT Guard]:::api
       ORCH[Orchestrator Service]:::core
       REC[Recommendation Service]:::core
-      LLM[LLM Provider\nMock or OpenAI]:::ext
+      LLM[LLM Provider\nMock or OpenAI gpt-4.1-mini]:::ext
+      VOICE[Speech Provider\nTranscribe, TTS, Realtime]:::ext
 
       GW --> AUTH
       GW --> ORCH
       ORCH --> LLM
+      GW --> VOICE
       ORCH --> REC
 
       subgraph AG[Domain Agent Modules]

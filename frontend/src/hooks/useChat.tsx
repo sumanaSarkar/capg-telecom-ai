@@ -28,19 +28,55 @@ const WELCOME_MESSAGE =
   "Hello! I'm Telly, your telecom assistant. How can I help you today? " +
   "Try: 'Show my past 2 months bill', 'Show all available plans', or 'What is my current plan?'";
 
+function sanitizeForSpeech(text: string): string {
+  return text
+    .replace(/\*\*/g, '')
+    .replace(/[_`#~]/g, '')
+    .replace(/\[(.*?)\]\((.*?)\)/g, '$1')
+    .replace(/[\u2728\u{1F381}\u{1F4B0}\u{1F4F1}\u{1F4B3}]/gu, '')
+    .replace(/\s*\n\s*/g, ' ')
+    .replace(/\s{2,}/g, ' ')
+    .trim();
+}
+
+function firstSentence(text: string): string {
+  const match = text.match(/^(.+?[.!?])(\s|$)/);
+  return (match?.[1] ?? text).trim();
+}
+
+function clampWords(text: string, maxWords: number): string {
+  const words = text.split(/\s+/).filter(Boolean);
+  if (words.length <= maxWords) {
+    return text.trim();
+  }
+  return `${words.slice(0, maxWords).join(' ')}...`;
+}
+
 function buildNaturalAgentVoiceReply(response: OrchestratorResponse): string {
   const text = response.finalMessage?.trim() ?? '';
   if (!text) {
     return 'I can help with that. Tell me what you need from your telecom account.';
   }
 
-  const normalizedText = text.replace(/\s+/g, ' ').trim();
+  const normalizedText = sanitizeForSpeech(text);
+
+  if (/network metadata|registered account profile|number on file/i.test(normalizedText)) {
+    const last4 = normalizedText.match(/ends with\s+(\d{4})/i)?.[1];
+    if (last4) {
+      return `I cannot read live network details directly, but I can verify your account number ending ${last4}. Would you like secure verification or SIM support now?`;
+    }
+    return 'I cannot directly read live network metadata, but I can securely verify your number from account records and continue from there.';
+  }
+
+  if (/block the sim|secure your sim|replacement sim|suspend outgoing/i.test(normalizedText)) {
+    return 'I know this can be stressful. I can block your SIM immediately, suspend outgoing activity, and start replacement support. Shall I begin now?';
+  }
 
   if (response.recommendation?.plan) {
     const plan = response.recommendation.plan;
     const dataText = plan.dataGB === -1 ? 'unlimited data' : `${plan.dataGB} gigabytes of data`;
     const callText = plan.callMinutes === -1 ? 'unlimited calls' : `${plan.callMinutes} minutes`;
-    return `I found ${plan.name}. It includes ${dataText} and ${callText}, and it costs $${plan.price.toFixed(2)} per month. Would you like me to walk you through it or proceed with this recommendation?`;
+    return `I found a strong option: ${plan.name}. It includes ${dataText} and ${callText}, at ${plan.price.toFixed(2)} per month. Want a quick comparison or should I proceed with this one?`;
   }
 
   if (response.availablePlans?.length) {
@@ -63,11 +99,17 @@ function buildNaturalAgentVoiceReply(response: OrchestratorResponse): string {
     return 'Your payment step is ready. I can guide you through the payment flow and confirm the next action clearly.';
   }
 
-  if (normalizedText.length > 220) {
-    return `${normalizedText.slice(0, 180).trim()}... I can explain the details in more depth if you want.`;
+  if (/sorry|unable|failed|error|issue/i.test(normalizedText)) {
+    return 'I understand. Something did not go as expected. I can quickly retry and guide you to the next best option.';
   }
 
-  return normalizedText;
+  if (normalizedText.length > 220) {
+    const summary = firstSentence(clampWords(normalizedText, 28));
+    return `${summary} I can break that down step by step if you want.`;
+  }
+
+  const summary = firstSentence(clampWords(normalizedText, 24));
+  return `Got it. ${summary} Would you like me to take the next step now?`;
 }
 
 async function speakAssistantMessage(response: OrchestratorResponse, overrideText?: string) {
