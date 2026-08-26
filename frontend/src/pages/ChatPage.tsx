@@ -334,6 +334,7 @@ export function ChatPage() {
   const realtimeChannelRef = useRef<RTCDataChannel | null>(null);
   const realtimeStreamRef = useRef<MediaStream | null>(null);
   const realtimeAudioRef = useRef<HTMLAudioElement | null>(null);
+  const realtimePendingCallsRef = useRef<Map<string, string>>(new Map());
   const submitMessageRef = useRef<((message: string, shouldSpeak?: boolean) => Promise<void>) | null>(null);
 
   useEffect(() => {
@@ -783,8 +784,41 @@ export function ChatPage() {
     realtimeChannelRef.current = null;
     realtimePeerRef.current = null;
     realtimeStreamRef.current = null;
+    realtimePendingCallsRef.current.clear();
     setVoiceMode(false);
     setListening(false);
+  };
+
+  const executeRealtimeTool = async (name: string, args: Record<string, unknown>): Promise<unknown> => {
+    if (name === 'get_recommendation') {
+      const query = typeof args.query === 'string' ? args.query : '';
+      const response = await api.ask(query, customerId, 'ask');
+      return {
+        finalMessage: response.finalMessage,
+        recommendation: response.recommendation,
+        availablePlans: response.availablePlans,
+        rechargeOptions: response.rechargeOptions,
+        roamingPackages: response.roamingPackages,
+        billingHistory: response.billingHistory,
+      };
+    }
+    return { error: `Unknown tool: ${name}` };
+  };
+
+  const sendRealtimeToolResult = (callId: string, output: unknown) => {
+    const channel = realtimeChannelRef.current;
+    if (!channel || channel.readyState !== 'open') return;
+    channel.send(
+      JSON.stringify({
+        type: 'conversation.item.create',
+        item: {
+          type: 'function_call_output',
+          call_id: callId,
+          output: JSON.stringify(output),
+        },
+      }),
+    );
+    channel.send(JSON.stringify({ type: 'response.create' }));
   };
 
   const handleStartRealtimeVoice = async () => {
@@ -819,12 +853,37 @@ export function ChatPage() {
         const realtimeEvent = JSON.parse(event.data) as {
           type?: string;
           transcript?: string;
+          call_id?: string;
+          name?: string;
+          arguments?: string;
+          item?: { type?: string; call_id?: string; name?: string };
         };
         if (realtimeEvent.type === 'conversation.item.input_audio_transcription.completed' && realtimeEvent.transcript?.trim()) {
           setMessages((prev) => [...prev, { id: crypto.randomUUID(), role: 'user', text: realtimeEvent.transcript!.trim() }]);
         }
         if (realtimeEvent.type === 'response.audio_transcript.done' && realtimeEvent.transcript?.trim()) {
           setMessages((prev) => [...prev, { id: crypto.randomUUID(), role: 'assistant', text: realtimeEvent.transcript!.trim() }]);
+        }
+        if (realtimeEvent.type === 'response.output_item.added' && realtimeEvent.item?.type === 'function_call') {
+          const { call_id, name } = realtimeEvent.item;
+          if (call_id && name) {
+            realtimePendingCallsRef.current.set(call_id, name);
+          }
+        }
+        if (realtimeEvent.type === 'response.function_call_arguments.done' && realtimeEvent.call_id) {
+          const callId = realtimeEvent.call_id;
+          const name = realtimeEvent.name ?? realtimePendingCallsRef.current.get(callId);
+          if (!name) return;
+          realtimePendingCallsRef.current.delete(callId);
+          let parsedArgs: Record<string, unknown> = {};
+          try {
+            parsedArgs = realtimeEvent.arguments ? JSON.parse(realtimeEvent.arguments) : {};
+          } catch {
+            parsedArgs = {};
+          }
+          void executeRealtimeTool(name, parsedArgs)
+            .then((result) => sendRealtimeToolResult(callId, result))
+            .catch((err) => sendRealtimeToolResult(callId, { error: err instanceof Error ? err.message : 'Tool call failed.' }));
         }
       };
 

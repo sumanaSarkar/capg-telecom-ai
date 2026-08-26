@@ -9,6 +9,7 @@ import { ProfileModule } from '../agents/profile/profile.module';
 import { RechargeModule } from '../agents/recharge/recharge.module';
 import { RoamingModule } from '../agents/roaming/roaming.module';
 import { AuthModule } from '../auth/auth.module';
+import { IntelligenceModule } from '../intelligence/intelligence.module';
 import { LlmModule } from '../llm/llm.module';
 import { OrchestratorController } from './orchestrator.controller';
 import { OrchestratorService } from './orchestrator.service';
@@ -22,6 +23,7 @@ import { TellyResponseTemplateService } from './telly-response-template.service'
   imports: [
     AuthModule,
     LlmModule,
+    IntelligenceModule,
     ProfileModule,
     AnalyticsModule,
     PlanModule,

@@ -10,6 +10,18 @@ services:
       - OPENAI_TRANSCRIPTION_MODEL=${OPENAI_TRANSCRIPTION_MODEL:-gpt-4o-mini-transcribe}
       - OPENAI_TTS_MODEL=${OPENAI_TTS_MODEL:-gpt-4o-mini-tts}
       - OPENAI_REALTIME_MODEL=${OPENAI_REALTIME_MODEL:-gpt-realtime-mini}
+      - VECTOR_DB=${VECTOR_DB:-}
+      - AZURE_SEARCH_ENDPOINT=${AZURE_SEARCH_ENDPOINT:-}
+      - AZURE_SEARCH_API_KEY=${AZURE_SEARCH_API_KEY:-}
+      - AZURE_SEARCH_INDEX=${AZURE_SEARCH_INDEX:-telecom-knowledge-base}
+      - MEMORY_ENABLED=${MEMORY_ENABLED:-true}
+      - SESSION_MEMORY=${SESSION_MEMORY:-true}
+      - CUSTOMER_MEMORY=${CUSTOMER_MEMORY:-true}
+      - SENTIMENT_ANALYSIS=${SENTIMENT_ANALYSIS:-true}
+      - PROACTIVE_RESPONSE=${PROACTIVE_RESPONSE:-true}
+      - MULTI_LANGUAGE=${MULTI_LANGUAGE:-true}
+      - DEFAULT_LANGUAGE=${DEFAULT_LANGUAGE:-en}
+      - SUPPORTED_LANGUAGES=${SUPPORTED_LANGUAGES:-en,es,hi,bn,kn,ta,te,ml}
       - NODE_ENV=production
     networks: [telecom-net]
   frontend:

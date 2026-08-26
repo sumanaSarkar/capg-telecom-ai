@@ -13,16 +13,24 @@ import {
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { ApiConsumes, ApiOperation, ApiTags } from '@nestjs/swagger';
+import { IsIn, IsNotEmpty, IsOptional, IsString } from 'class-validator';
 import type { Response } from 'express';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { SpeechService } from './speech.service';
 
 export class TtsDto {
+  @IsString()
+  @IsNotEmpty()
   text!: string;
+
+  @IsOptional()
+  @IsIn(['alloy', 'echo', 'fable', 'onyx', 'nova', 'shimmer'])
   voice?: 'alloy' | 'echo' | 'fable' | 'onyx' | 'nova' | 'shimmer';
 }
 
 export class RealtimeSessionDto {
+  @IsOptional()
+  @IsString()
   customerId?: string;
 }
 

@@ -13,6 +13,11 @@ import { RoamingPackage } from '../agents/roaming/roaming.model';
 import { RoamingService } from '../agents/roaming/roaming.service';
 import type { ConversationMessage, ILlmProvider } from '../llm/llm-provider.interface';
 import { LLM_PROVIDER } from '../llm/llm-provider.interface';
+import { FeatureFlagsService } from '../intelligence/feature-flags.service';
+import { LanguageService } from '../intelligence/language.service';
+import { MemoryService } from '../intelligence/memory.service';
+import { RagService } from '../intelligence/rag.service';
+import { SentimentService } from '../intelligence/sentiment.service';
 import { AskAction, AskDto } from './ask.dto';
 import { TellyResponseTemplateService } from './telly-response-template.service';
 import { CustomerIntelligenceService } from './customer-intelligence.service';
@@ -99,6 +104,11 @@ export class OrchestratorService {
     private readonly autopilotService: AutopilotService,
     private readonly tellyResponseTemplateService: TellyResponseTemplateService,
     @Optional() private readonly esimService?: EsimService,
+    @Optional() private readonly featureFlags?: FeatureFlagsService,
+    @Optional() private readonly ragService?: RagService,
+    @Optional() private readonly memoryService?: MemoryService,
+    @Optional() private readonly sentimentService?: SentimentService,
+    @Optional() private readonly languageService?: LanguageService,
   ) {}
 
   async ask(dto: AskDto): Promise<OrchestratorResponse> {
@@ -123,8 +133,87 @@ export class OrchestratorService {
       response = await this.handleAsk(dto, intent, agents);
     }
 
+    response = await this.applyIntelligenceLayer(dto, response);
+
     this.recordCommunicationTrace(dto, response);
     return response;
+  }
+
+  /** Enriches the response with RAG grounding, memory, sentiment, proactive questions, and translation. */
+  private async applyIntelligenceLayer(dto: AskDto, response: OrchestratorResponse): Promise<OrchestratorResponse> {
+    const flags = this.featureFlags;
+    if (!flags) return response;
+
+    const context: Record<string, unknown> = { ...(response.context ?? {}) };
+
+    if (flags.sessionMemoryEnabled || flags.customerMemoryEnabled) {
+      this.memoryService?.appendSessionTurn(dto.customerId, dto.message);
+      this.memoryService?.extractAndRememberFacts(dto.customerId, dto.message);
+      const customerFacts = this.memoryService?.getCustomerFacts(dto.customerId) ?? [];
+      if (customerFacts.length > 0) {
+        context.customerMemory = customerFacts;
+      }
+    }
+
+    if (flags.sentimentAnalysisEnabled) {
+      const sentiment = this.sentimentService?.analyze(dto.message);
+      if (sentiment) {
+        context.sentiment = sentiment;
+      }
+    }
+
+    if (flags.ragEnabled) {
+      const snippets = await this.ragService?.retrieve(dto.message);
+      if (snippets && snippets.length > 0) {
+        context.knowledgeSnippets = snippets;
+      }
+    }
+
+    if (flags.proactiveResponseEnabled) {
+      const proactiveQuestions = this.buildProactiveQuestions(dto.message);
+      if (proactiveQuestions.length > 0) {
+        context.proactiveQuestions = proactiveQuestions;
+      }
+    }
+
+    let finalMessage = response.finalMessage;
+    let detectedLanguage = flags.defaultLanguage;
+    if (flags.multiLanguageEnabled && this.languageService) {
+      detectedLanguage = this.languageService.detect(dto.message);
+      if (detectedLanguage !== flags.defaultLanguage) {
+        finalMessage = await this.languageService.translate(finalMessage, detectedLanguage);
+      }
+      context.detectedLanguage = detectedLanguage;
+    }
+
+    return { ...response, finalMessage, context };
+  }
+
+  /** Anticipates the next 2-3 details a human agent would ask for, based on intent signals in the message. */
+  private buildProactiveQuestions(message: string): string[] {
+    const normalized = message.toLowerCase();
+    const questions: string[] = [];
+
+    const mentionsTravel = /\b(travel|trip|going to|visiting|abroad|roaming)\b/.test(normalized);
+    if (mentionsTravel) {
+      questions.push('How many days will you be there?');
+      questions.push('Roughly how much data do you think you will need?');
+      questions.push('How much talk time do you need, and will you be calling India often?');
+    }
+
+    const mentionsBilling = /\b(bill|invoice|charge|overcharg)/.test(normalized);
+    if (mentionsBilling && !mentionsTravel) {
+      questions.push('Which billing cycle is this about?');
+      questions.push('Is this about the total amount or a specific charge?');
+    }
+
+    const mentionsRecharge = /\b(recharge|top.?up|renew)\b/.test(normalized);
+    if (mentionsRecharge && !mentionsTravel) {
+      questions.push('How many days are left until your next billing cycle?');
+      questions.push('What is your typical monthly data and call usage?');
+    }
+
+    return questions;
   }
 
   private filterRecentBilling(records: BillingRecord[], months: number): BillingRecord[] {

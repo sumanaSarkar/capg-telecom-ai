@@ -34,6 +34,25 @@ export class OpenAiLlmProvider implements ILlmProvider {
     this.logger.log(`OpenAI LLM provider initialised (model: ${this.model}).`);
   }
 
+  // Newer reasoning-family models (gpt-5, o1, o3, o4, ...) reject "max_tokens" and require "max_completion_tokens".
+  private usesMaxCompletionTokens(): boolean {
+    return /^(gpt-5|o1|o3|o4)/i.test(this.model);
+  }
+
+  private tokenLimitParam(limit: number): Record<string, number> {
+    return this.usesMaxCompletionTokens() ? { max_completion_tokens: limit } : { max_tokens: limit };
+  }
+
+  // Reasoning-family models only support the default temperature (1); omit the override for them.
+  private temperatureParam(value: number): Record<string, number> {
+    return this.usesMaxCompletionTokens() ? {} : { temperature: value };
+  }
+
+  // Reasoning models spend part of the token budget on hidden reasoning tokens, so keep effort low and budgets generous.
+  private reasoningEffortParam(): Record<string, string> {
+    return this.usesMaxCompletionTokens() ? { reasoning_effort: 'minimal' } : {};
+  }
+
   async detectIntent(userMessage: string): Promise<IntentResult> {
     try {
       const completion = await this.client.chat.completions.create({
@@ -43,8 +62,9 @@ export class OpenAiLlmProvider implements ILlmProvider {
           { role: 'user', content: userMessage },
         ],
         response_format: { type: 'json_object' },
-        temperature: 0,
-        max_tokens: 200,
+        ...this.temperatureParam(0),
+        ...this.reasoningEffortParam(),
+        ...this.tokenLimitParam(this.usesMaxCompletionTokens() ? 800 : 200),
       });
 
       const raw = completion.choices[0]?.message?.content ?? '{}';
@@ -96,8 +116,9 @@ export class OpenAiLlmProvider implements ILlmProvider {
           },
           { role: 'user', content: interpolated },
         ],
-        temperature: 0.4,
-        max_tokens: 150,
+        ...this.temperatureParam(0.4),
+        ...this.reasoningEffortParam(),
+        ...this.tokenLimitParam(this.usesMaxCompletionTokens() ? 600 : 150),
       });
 
       return completion.choices[0]?.message?.content?.trim() ?? interpolated;
@@ -117,8 +138,9 @@ export class OpenAiLlmProvider implements ILlmProvider {
       const completion = await this.client.chat.completions.create({
         model: this.model,
         messages: fullMessages,
-        temperature: 0.7,
-        max_tokens: 300,
+        ...this.temperatureParam(0.7),
+        ...this.reasoningEffortParam(),
+        ...this.tokenLimitParam(this.usesMaxCompletionTokens() ? 1000 : 300),
       });
 
       return completion.choices[0]?.message?.content?.trim() ?? 'I\'m sorry, I could not generate a response right now.';
