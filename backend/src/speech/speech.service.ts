@@ -63,8 +63,8 @@ export class SpeechService {
     return response.arrayBuffer();
   }
 
-  private async buildCustomerContextSummary(customerId?: string): Promise<string> {
-    if (!customerId) return 'No customer is identified yet.';
+  private async buildCustomerContextSummary(customerId?: string): Promise<{ summary: string; firstName: string | null }> {
+    if (!customerId) return { summary: 'No customer is identified yet.', firstName: null };
 
     try {
       const [profile, analytics] = await Promise.all([
@@ -72,7 +72,8 @@ export class SpeechService {
         this.analyticsService.getAnalytics(customerId),
       ]);
 
-      return [
+      const firstName = profile.name?.trim().split(/\s+/)[0] || null;
+      const summary = [
         `Name: ${profile.name}`,
         `Current plan: ${profile.plan}`,
         `Customer type: ${profile.customerType}`,
@@ -81,8 +82,13 @@ export class SpeechService {
         `Call usage: ${analytics.callMinutes} of ${analytics.callLimit} minutes`,
         `Past roaming trips: ${analytics.roamingHistory.map((entry) => entry.country).join(', ') || 'none'}`,
       ].join('; ');
+
+      return { summary, firstName };
     } catch {
-      return 'Customer context could not be loaded; ask the customer directly instead of guessing.';
+      return {
+        summary: 'Customer context could not be loaded; ask the customer directly instead of guessing.',
+        firstName: null,
+      };
     }
   }
 
@@ -90,9 +96,15 @@ export class SpeechService {
     if (!this.client) throw new Error('OpenAI client not initialised');
 
     const model = process.env.OPENAI_REALTIME_MODEL || 'gpt-realtime-mini';
-    const contextSummary = await this.buildCustomerContextSummary(customerId);
+    const { summary: contextSummary, firstName } = await this.buildCustomerContextSummary(customerId);
 
-    const instructions = `You are Telly, a proactive telecom self-care voice agent${customerId ? ` assisting customer ${customerId}` : ''}, speaking live like a real human agent — not reading a script.
+    const instructions = `You are Telly, a real live telecom care agent for this call${customerId ? ` assisting customer ${customerId}` : ''} — a warm, experienced human support professional, not a script or a bot.
+
+IDENTITY & PRESENCE
+- You are a real person on a live call, working from your desk with the customer's account already open in front of you. Speak, breathe, and react like a human colleague would — never say you are an AI, a bot, or a language model, and never break character.
+- ${firstName ? `Greet the customer warmly by their first name, "${firstName}", at the start of the call and naturally use it again once or twice through the conversation, the way a good agent does.` : 'Greet the customer warmly at the start of the call.'}
+- You already have their account open, so never ask them to "verify their identity" or repeat information you already have (see KNOWN ACCOUNT CONTEXT below).
+- Sound present and attentive: use small natural acknowledgements ("mm-hmm", "got it", "I hear you") the way a human agent listening on a call would, sparingly and naturally, not in every turn.
 
 KNOWN ACCOUNT CONTEXT (already loaded, do not ask the customer to repeat this): ${contextSummary}
 
@@ -101,6 +113,7 @@ CORE STYLE
 - Acknowledge emotion (frustration, worry, excitement) before problem-solving. Never blame the customer.
 - Keep turns short and conversational, like a real phone call — one idea or question per turn, no lists read aloud.
 - Never claim an account change, payment, or activation happened unless the "get_recommendation" tool or system output confirms it.
+- If the customer says something personal or emotional unrelated to telecom (feelings, food, small talk), just respond like a real person — warmly and briefly. Do not force in an unrelated sales pitch or drag up an earlier topic just to sound proactive; only reconnect to telecom when it's genuinely relevant to what they just said.
 
 BE PROACTIVE, NOT REACTIVE
 Do not just answer the literal question — anticipate what the customer will need next and guide the conversation like an experienced human agent gathering the right details before recommending anything. When the customer signals an intent, immediately ask the 2-3 follow-up questions a great agent would ask, one at a time, before proposing anything.
@@ -123,36 +136,68 @@ TOOLS
 
 Ask only one focused question per turn, keep momentum, and offer escalation to a human agent if something cannot be resolved safely.`;
 
-    const session = await (this.client as any).beta.realtime.sessions.create({
-      model,
-      voice: 'nova',
-      modalities: ['text', 'audio'],
-      input_audio_transcription: {
-        model: process.env.OPENAI_TRANSCRIPTION_MODEL || 'gpt-4o-mini-transcribe',
-      },
-      instructions,
-      tools: [
-        {
-          type: 'function',
-          name: 'get_recommendation',
-          description:
-            'Fetch a grounded, personalized recommendation (plan, roaming package, add-on, billing info, or support guidance) from the telecom backend once enough details have been gathered from the customer. Never guess prices or data limits without calling this first.',
-          parameters: {
-            type: 'object',
-            properties: {
-              query: {
-                type: 'string',
-                description:
-                  'A concise natural-language summary of everything learned from the customer, e.g. "Traveling to Singapore for 6 days, needs about 10GB data and 200 minutes talktime, calls India often."',
-              },
+    // Uses the current Realtime "client secrets" API (replaces the deprecated beta.realtime.sessions.create).
+    const clientSecret = await this.client.realtime.clientSecrets.create({
+      session: {
+        type: 'realtime',
+        model,
+        instructions,
+        output_modalities: ['audio'],
+        audio: {
+          input: {
+            transcription: {
+              model: process.env.OPENAI_TRANSCRIPTION_MODEL || 'gpt-4o-mini-transcribe',
             },
-            required: ['query'],
+          },
+          output: {
+            voice: 'marin',
           },
         },
-      ],
-      tool_choice: 'auto',
+        tools: [
+          {
+            type: 'function',
+            name: 'get_recommendation',
+            description:
+              'Fetch a grounded, personalized recommendation (plan, roaming package, add-on, billing info, or support guidance) from the telecom backend once enough details have been gathered from the customer. Never guess prices or data limits without calling this first.',
+            parameters: {
+              type: 'object',
+              properties: {
+                query: {
+                  type: 'string',
+                  description:
+                    'A concise natural-language summary of everything learned from the customer, e.g. "Traveling to Singapore for 6 days, needs about 10GB data and 200 minutes talktime, calls India often."',
+                },
+              },
+              required: ['query'],
+            },
+          },
+        ],
+        tool_choice: 'auto',
+      },
+    } as never);
+
+    return clientSecret as unknown as Record<string, unknown>;
+  }
+
+  async exchangeRealtimeSdp(sdp: string): Promise<string> {
+    if (!this.client) throw new Error('OpenAI client not initialised');
+    if (!sdp?.trim()) throw new Error('Realtime SDP offer is empty');
+
+    const model = process.env.OPENAI_REALTIME_MODEL || 'gpt-realtime';
+    const response = await fetch(`https://api.openai.com/v1/realtime/calls?model=${encodeURIComponent(model)}`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
+        'Content-Type': 'application/sdp',
+      },
+      body: sdp,
     });
 
-    return session;
+    if (!response.ok) {
+      const details = (await response.text()).slice(0, 300).replace(/\s+/g, ' ').trim();
+      throw new Error(`OpenAI realtime connection failed (${response.status})${details ? `: ${details}` : '.'}`);
+    }
+
+    return response.text();
   }
 }

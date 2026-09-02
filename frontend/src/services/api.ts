@@ -197,6 +197,14 @@ export const api = {
     const { data } = await apiClient.post<Record<string, unknown>>('/speech/realtime/session', { customerId });
     return data;
   },
+
+  connectRealtime: async (sdp: string): Promise<string> => {
+    const { data } = await apiClient.post<string>('/speech/realtime/connect', sdp, {
+      headers: { 'Content-Type': 'application/sdp' },
+      transformResponse: [(value) => value],
+    });
+    return data;
+  },
 };
 
 export default api;

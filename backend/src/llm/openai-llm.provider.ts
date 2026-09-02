@@ -53,6 +53,12 @@ export class OpenAiLlmProvider implements ILlmProvider {
     return this.usesMaxCompletionTokens() ? { reasoning_effort: 'minimal' } : {};
   }
 
+  // The free-form persona chat needs more thorough instruction-following (tone shifts, meta-feedback,
+  // staying grounded in context) than the cheap classification/rephrasing calls, so give it more room to think.
+  private chatReasoningEffortParam(): Record<string, string> {
+    return this.usesMaxCompletionTokens() ? { reasoning_effort: 'low' } : {};
+  }
+
   async detectIntent(userMessage: string): Promise<IntentResult> {
     try {
       const completion = await this.client.chat.completions.create({
@@ -130,23 +136,55 @@ export class OpenAiLlmProvider implements ILlmProvider {
 
   async chat(messages: ConversationMessage[]): Promise<string> {
     try {
-      const systemPresent = messages.some((m) => m.role === 'system');
-      const fullMessages = systemPresent
-        ? messages
-        : [{ role: 'system' as const, content: SYSTEM_PROMPT_CHAT }, ...messages];
+      // The persona system prompt always leads; any caller-supplied system messages (e.g. real
+      // account context) are grounding context layered on top of it, never a replacement for it.
+      const callerSystemMessages = messages.filter((m) => m.role === 'system');
+      const nonSystemMessages = messages.filter((m) => m.role !== 'system');
+      const fullMessages = [
+        { role: 'system' as const, content: SYSTEM_PROMPT_CHAT },
+        ...callerSystemMessages,
+        ...nonSystemMessages,
+      ];
 
       const completion = await this.client.chat.completions.create({
         model: this.model,
         messages: fullMessages,
         ...this.temperatureParam(0.7),
-        ...this.reasoningEffortParam(),
-        ...this.tokenLimitParam(this.usesMaxCompletionTokens() ? 1000 : 300),
+        ...this.chatReasoningEffortParam(),
+        ...this.tokenLimitParam(this.usesMaxCompletionTokens() ? 1200 : 300),
       });
 
       return completion.choices[0]?.message?.content?.trim() ?? 'I\'m sorry, I could not generate a response right now.';
     } catch (err) {
       this.logger.warn(`chat failed: ${String(err)}`);
       return 'I\'m having trouble connecting right now. Please try again in a moment.';
+    }
+  }
+
+  async humanize(draftMessage: string): Promise<string> {
+    try {
+      const completion = await this.client.chat.completions.create({
+        model: this.model,
+        messages: [
+          { role: 'system', content: SYSTEM_PROMPT_CHAT },
+          {
+            role: 'user',
+            content:
+              'Rewrite the following structured draft as something you would actually say out loud on a live call — flowing, warm, conversational sentences, no markdown, no bullet points or dashes, no bold text. ' +
+              'Keep every price, GB, minute, plan name, and customer name exactly as given; do not invent or drop any of them. ' +
+              'End with a short, natural yes/no style check-in instead of a formal call-to-action button phrase.\n\n' +
+              `Draft:\n${draftMessage}`,
+          },
+        ],
+        ...this.temperatureParam(0.6),
+        ...this.chatReasoningEffortParam(),
+        ...this.tokenLimitParam(this.usesMaxCompletionTokens() ? 900 : 250),
+      });
+
+      return completion.choices[0]?.message?.content?.trim() || draftMessage;
+    } catch (err) {
+      this.logger.warn(`humanize failed, returning draft unmodified: ${String(err)}`);
+      return draftMessage;
     }
   }
 }

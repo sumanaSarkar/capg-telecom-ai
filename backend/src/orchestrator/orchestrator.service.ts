@@ -390,7 +390,38 @@ export class OrchestratorService {
 
   private getConversationMessages(customerId: string, latestMessage: string): ConversationMessage[] {
     const history = this.conversationHistoryByCustomer.get(customerId) ?? [];
-    return [...history, { role: 'user', content: latestMessage }];
+    const contextMessage = this.buildCustomerContextMessage(customerId);
+    return [contextMessage, ...history, { role: 'user', content: latestMessage }];
+  }
+
+  /** Grounds the free-form chat turn in the customer's real account data so the LLM never has to ask for or guess known facts. */
+  private buildCustomerContextMessage(customerId: string): ConversationMessage {
+    try {
+      const profile = this.profileService.getProfile(customerId);
+      const analytics = this.analyticsService.getAnalytics(customerId);
+      const plans = this.planService.getPlans(customerId);
+      const currentPlan = plans.find((plan) => plan.name === profile.plan);
+
+      const summary = [
+        `Customer name: ${profile.name}`,
+        `Current plan: ${profile.plan}${currentPlan ? ` (${currentPlan.dataGB}GB data, ${currentPlan.callMinutes === -1 ? 'unlimited' : currentPlan.callMinutes} minutes, $${currentPlan.price.toFixed(2)}/mo)` : ''}`,
+        `Customer type: ${profile.customerType}`,
+        `Account balance: $${profile.accountBalance}`,
+        `Data usage: ${analytics.dataUsageGB}GB of ${analytics.dataLimitGB}GB`,
+        `Call usage: ${analytics.callMinutes} of ${analytics.callLimit} minutes`,
+        `Past roaming trips: ${analytics.roamingHistory.map((entry) => entry.country).join(', ') || 'none'}`,
+      ].join('; ');
+
+      return {
+        role: 'system',
+        content: `KNOWN ACCOUNT CONTEXT for this customer (already loaded — never ask the customer to repeat this or say you need to "check" it, just use it directly): ${summary}`,
+      };
+    } catch {
+      return {
+        role: 'system',
+        content: 'Account context could not be loaded for this customer; do not guess account details, ask the customer directly instead.',
+      };
+    }
   }
 
   private recordCommunicationTrace(dto: AskDto, response: OrchestratorResponse) {
@@ -697,12 +728,13 @@ export class OrchestratorService {
       .map((c) => `${c.name} (₹${c.monthlyPrice}/mo)`)
       .join(', ');
 
-    const finalMessage = this.tellyResponseTemplateService.buildRecommendationMessage({
+    const templatedDraft = this.tellyResponseTemplateService.buildRecommendationMessage({
       message: dto.message,
       customerName: profile.name,
       customPlan,
       intelligence,
     });
+    const finalMessage = await this.llmProvider.humanize(templatedDraft);
 
     this.appendConversationTurn(dto.customerId, { role: 'user', content: dto.message });
     this.appendConversationTurn(dto.customerId, { role: 'assistant', content: finalMessage });

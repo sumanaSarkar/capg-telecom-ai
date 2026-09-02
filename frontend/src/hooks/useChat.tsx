@@ -38,22 +38,13 @@ function sanitizeForSpeech(text: string): string {
     .replace(/[_`#~]/g, '')
     .replace(/\[(.*?)\]\((.*?)\)/g, '$1')
     .replace(/[\u2728\u{1F381}\u{1F4B0}\u{1F4F1}\u{1F4B3}]/gu, '')
+    // Turn bullet/dash lists into flowing spoken sentences instead of reading out "dash" pauses.
+    .replace(/:\s*[-•]\s+/g, ': ')
+    .replace(/\n\s*[-•]\s+/g, '. ')
+    .replace(/\s[-•]\s+/g, ', ')
     .replace(/\s*\n\s*/g, ' ')
     .replace(/\s{2,}/g, ' ')
     .trim();
-}
-
-function firstSentence(text: string): string {
-  const match = text.match(/^(.+?[.!?])(\s|$)/);
-  return (match?.[1] ?? text).trim();
-}
-
-function clampWords(text: string, maxWords: number): string {
-  const words = text.split(/\s+/).filter(Boolean);
-  if (words.length <= maxWords) {
-    return text.trim();
-  }
-  return `${words.slice(0, maxWords).join(' ')}...`;
 }
 
 function detectDeclaredGender(sourceUserText?: string): 'male' | 'female' | null {
@@ -104,44 +95,9 @@ function buildNaturalAgentVoiceReply(response: OrchestratorResponse): string {
     return 'I know this can be stressful. I can block your SIM immediately, suspend outgoing activity, and start replacement support. Shall I begin now?';
   }
 
-  if (response.recommendation?.plan) {
-    const plan = response.recommendation.plan;
-    const dataText = plan.dataGB === -1 ? 'unlimited data' : `${plan.dataGB} gigabytes of data`;
-    const callText = plan.callMinutes === -1 ? 'unlimited calls' : `${plan.callMinutes} minutes`;
-    return `I found a strong option: ${plan.name}. It includes ${dataText} and ${callText}, at ${plan.price.toFixed(2)} per month. Want a quick comparison or should I proceed with this one?`;
-  }
-
-  if (response.availablePlans?.length) {
-    const topPlan = response.availablePlans[0];
-    const label = topPlan?.name ?? 'your best option';
-    return `I found ${response.availablePlans.length} plans that match your needs. The strongest option is ${label}. I can compare the details with you and help you decide.`;
-  }
-
-  if (response.billingHistory?.length) {
-    const total = response.billingHistory.reduce((sum, item) => sum + Number(item.amount || 0), 0);
-    return `Your recent billing totals ${total.toFixed(2)} dollars across ${response.billingHistory.length} entries. I can break down the charges or suggest the next best action.`;
-  }
-
-  if (response.roamingPackages?.length) {
-    const bestPackage = response.roamingPackages[0];
-    return `I found ${response.roamingPackages.length} roaming package options. The top choice is ${bestPackage?.name ?? 'a roaming pack'} for ${bestPackage?.countries?.join(', ') ?? 'your destination'}.`;
-  }
-
-  if (response.paymentUrl) {
-    return 'Your payment step is ready. I can guide you through the payment flow and confirm the next action clearly.';
-  }
-
-  if (/sorry|unable|failed|error|issue/i.test(normalizedText)) {
-    return 'I understand. Something did not go as expected. I can quickly retry and guide you to the next best option.';
-  }
-
-  if (normalizedText.length > 220) {
-    const summary = firstSentence(clampWords(normalizedText, 28));
-    return `${summary} I can break that down step by step if you want.`;
-  }
-
-  const summary = firstSentence(clampWords(normalizedText, 24));
-  return `Got it. ${summary} Would you like me to take the next step now?`;
+  // The backend already produces a dynamic, language-aware, proactive reply — speak it as-is
+  // instead of re-templating it with canned English phrases that would clash with the response's language.
+  return normalizedText;
 }
 
 async function speakAssistantMessage(

@@ -162,4 +162,9 @@ export class MockLlmProvider implements ILlmProvider {
       `${buildTelecomAgentPrompt().split('\n')[0]} I can help you with a tailored plan, add-ons such as unlimited calls, roaming, Netflix/OTT bundles, and premium support. What do you need today?`,
     );
   }
+
+  humanize(draftMessage: string): Promise<string> {
+    // No real model available; just strip markdown so it doesn't read literal "**" characters aloud.
+    return Promise.resolve(draftMessage.replace(/\*\*/g, '').replace(/^[-*]\s+/gm, ''));
+  }
 }

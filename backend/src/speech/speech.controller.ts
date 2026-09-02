@@ -98,4 +98,20 @@ export class SpeechController {
 
     return this.speechService.createRealtimeSession(dto.customerId);
   }
+
+  @Post('realtime/connect')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Exchange a browser SDP offer for an OpenAI Realtime SDP answer' })
+  async connectRealtime(@Body() sdp: string, @Res() res: Response): Promise<void> {
+    if (typeof sdp !== 'string' || !sdp.trim()) {
+      throw new BadRequestException('A realtime SDP offer is required.');
+    }
+    if (!this.speechService.isAvailable()) {
+      throw new ServiceUnavailableException('Real-time voice requires OPENAI_API_KEY.');
+    }
+
+    const answer = await this.speechService.exchangeRealtimeSdp(sdp);
+    res.setHeader('Content-Type', 'application/sdp');
+    res.end(answer);
+  }
 }

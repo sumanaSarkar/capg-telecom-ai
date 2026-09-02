@@ -15,32 +15,6 @@ import type { ChatMessage } from '../hooks/useChat';
 import type { AgentCommunicationTrace, OrchestratorResponse } from '../services/types';
 import styles from './ChatPage.module.css';
 
-type SpeechRecognitionConstructor = new () => SpeechRecognitionInstance;
-
-interface SpeechRecognitionInstance {
-  lang: string;
-  continuous: boolean;
-  interimResults: boolean;
-  onresult: ((event: SpeechRecognitionResultEventLike) => void) | null;
-  onerror: ((event: SpeechRecognitionErrorEventLike) => void) | null;
-  onend: (() => void) | null;
-  start: () => void;
-  stop: () => void;
-}
-
-interface SpeechRecognitionResultEventLike {
-  resultIndex: number;
-  results: ArrayLike<{
-    isFinal: boolean;
-    [index: number]: { transcript: string };
-    length: number;
-  }>;
-}
-
-interface SpeechRecognitionErrorEventLike {
-  error: string;
-}
-
 const NON_TELECOM_BANNER_TEXT = 'I am not available for this service.';
 const MAX_FLOW_TRACES = 5;
 const FLOW_CLEAR_MARKER_PREFIX = 'telecom-ai-flow-clear-marker';
@@ -315,7 +289,6 @@ export function ChatPage() {
   const [error, setError] = useState<string | null>(null);
   const [listening, setListening] = useState(false);
   const [voiceMode, setVoiceMode] = useState(false);
-  const [voiceReady, setVoiceReady] = useState(false);
   const [backendHistory, setBackendHistory] = useState<AgentCommunicationTrace[]>([]);
   const [localHistory, setLocalHistory] = useState<AgentCommunicationTrace[]>([]);
   const [historyLoading, setHistoryLoading] = useState(true);
@@ -326,16 +299,12 @@ export function ChatPage() {
   const [autopilotEnabled, setAutopilotEnabled] = useState(false);
   const [autopilotLoading, setAutopilotLoading] = useState(false);
   const threadRef = useRef<HTMLDivElement>(null);
-  const recognitionRef = useRef<SpeechRecognitionInstance | null>(null);
-  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
-  const audioChunksRef = useRef<Blob[]>([]);
   const realtimeSessionRef = useRef<Record<string, unknown> | null>(null);
   const realtimePeerRef = useRef<RTCPeerConnection | null>(null);
   const realtimeChannelRef = useRef<RTCDataChannel | null>(null);
   const realtimeStreamRef = useRef<MediaStream | null>(null);
   const realtimeAudioRef = useRef<HTMLAudioElement | null>(null);
   const realtimePendingCallsRef = useRef<Map<string, string>>(new Map());
-  const submitMessageRef = useRef<((message: string, shouldSpeak?: boolean) => Promise<void>) | null>(null);
 
   useEffect(() => {
     threadRef.current?.scrollTo({ top: threadRef.current.scrollHeight, behavior: 'smooth' });
@@ -488,63 +457,6 @@ export function ChatPage() {
     });
   }, [diagramNodes]);
 
-  useEffect(() => {
-    const recognitionConstructor =
-      (window as Window & {
-        SpeechRecognition?: SpeechRecognitionConstructor;
-        webkitSpeechRecognition?: SpeechRecognitionConstructor;
-      }).SpeechRecognition ??
-      (window as Window & {
-        SpeechRecognition?: SpeechRecognitionConstructor;
-        webkitSpeechRecognition?: SpeechRecognitionConstructor;
-      }).webkitSpeechRecognition;
-
-    const supportsMediaRecorder = typeof window !== 'undefined' && 'MediaRecorder' in window;
-    setVoiceReady(Boolean(recognitionConstructor || supportsMediaRecorder));
-
-    if (!recognitionConstructor) {
-      return;
-    }
-
-    const recognition = new recognitionConstructor();
-    recognition.lang = 'en-US';
-    recognition.continuous = true;
-    recognition.interimResults = false;
-    recognition.onresult = (event) => {
-      const transcript = Array.from({ length: event.results.length }, (_, index) => event.results[index])
-        .slice(event.resultIndex)
-        .map((result) => result[0]?.transcript ?? '')
-        .join(' ')
-        .trim();
-
-      if (transcript) {
-        void submitMessageRef.current?.(transcript, true);
-      }
-    };
-    recognition.onerror = () => {
-      setListening(false);
-      setError('Voice input was interrupted. Please try again.');
-    };
-    recognition.onend = () => {
-      if (voiceMode && !loading) {
-        setTimeout(() => {
-          if (voiceMode && recognitionRef.current && !loading) {
-            recognitionRef.current.start();
-          }
-        }, 300);
-        return;
-      }
-      setListening(false);
-    };
-
-    recognitionRef.current = recognition;
-
-    return () => {
-      recognition.stop();
-      recognitionRef.current = null;
-    };
-  }, []);
-
   const appendAssistantResponse = (
     response: OrchestratorResponse,
     shouldSpeak = false,
@@ -560,11 +472,6 @@ export function ChatPage() {
   const submitMessage = async (message: string, shouldSpeak = false) => {
     const trimmed = message.trim();
     if (!trimmed || loading) return;
-
-    if (recognitionRef.current && listening) {
-      recognitionRef.current.stop();
-      setListening(false);
-    }
 
     setMessages((prev) => [...prev, { id: crypto.randomUUID(), role: 'user', text: trimmed }]);
     setInput('');
@@ -585,10 +492,6 @@ export function ChatPage() {
     }
   };
 
-  useEffect(() => {
-    submitMessageRef.current = submitMessage;
-  }, [submitMessage]);
-
   useEffect(() => () => stopRealtimeVoice(), []);
 
   const handleSend = async (event: FormEvent) => {
@@ -596,88 +499,18 @@ export function ChatPage() {
     await submitMessage(input);
   };
 
-  const startVoiceCapture = async () => {
-    if (typeof navigator !== 'undefined' && navigator.mediaDevices && typeof MediaRecorder !== 'undefined') {
-      try {
-        setError(null);
-        setVoiceMode(true);
-        setListening(true);
-
-        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-        const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
-          ? 'audio/webm;codecs=opus'
-          : 'audio/webm';
-
-        const recorder = new MediaRecorder(stream, { mimeType });
-        audioChunksRef.current = [];
-        recorder.ondataavailable = (event) => {
-          if (event.data.size > 0) {
-            audioChunksRef.current.push(event.data);
-          }
-        };
-
-        recorder.onstop = async () => {
-          const blob = new Blob(audioChunksRef.current, { type: mimeType || 'audio/webm' });
-          const extension = blob.type.includes('wav') ? 'wav' : blob.type.includes('mp4') ? 'm4a' : blob.type.includes('ogg') ? 'ogg' : 'webm';
-          stream.getTracks().forEach((track) => track.stop());
-
-          try {
-            const result = await api.transcribeAudio(blob, `voice.${extension}`);
-            const transcript = result.transcript?.trim();
-            if (transcript) {
-              await submitMessageRef.current?.(transcript, true);
-            }
-          } catch {
-            setError('Voice transcription failed. Please try again.');
-          } finally {
-            setListening(false);
-            if (voiceMode && !loading) {
-              setListening(true);
-            }
-          }
-        };
-
-        mediaRecorderRef.current = recorder;
-        recorder.start();
-        return;
-      } catch {
-        setListening(false);
-        setVoiceMode(false);
-      }
-    }
-
-    if (!voiceReady || !recognitionRef.current) {
-      setError('Voice input is not supported in this browser.');
-      return;
-    }
-
-    setError(null);
-    setVoiceMode(true);
-    setListening(true);
-    recognitionRef.current.start();
-  };
-
-  const stopVoiceCapture = () => {
-    setVoiceMode(false);
-    setListening(false);
-    mediaRecorderRef.current?.stop();
-    if (recognitionRef.current) {
-      recognitionRef.current.stop();
-    }
-  };
-
   const toggleVoiceInput = async () => {
     if (input.trim() || loading) {
-      setError('Please send the current text message first before using voice input.');
+      setError('Please send the current text message first before starting a live voice conversation.');
       return;
     }
 
     if (listening) {
-      stopVoiceCapture();
+      stopRealtimeVoice();
       return;
     }
 
-    await startVoiceCapture();
+    await handleStartRealtimeVoice();
   };
 
   const handleConfirmPlan = async (messageId: string, response: OrchestratorResponse) => {
@@ -759,10 +592,6 @@ export function ChatPage() {
   };
 
   const handleStartNewChat = () => {
-    if (recognitionRef.current && listening) {
-      recognitionRef.current.stop();
-      setListening(false);
-    }
     setVoiceMode(false);
     stopRealtimeVoice();
 
@@ -827,14 +656,17 @@ export function ChatPage() {
       return;
     }
 
+    let realtimeStage = 'creating a realtime session';
+
     try {
       setInput('');
       setError(null);
       const session = await api.createRealtimeSession(customerId);
       realtimeSessionRef.current = session;
-      const clientSecret = (session as { client_secret?: { value?: string } }).client_secret?.value;
-      if (!clientSecret) {
-        throw new Error('Realtime session did not return a client secret.');
+      // Current Realtime "client secrets" API returns { value, session, expires_at } at the top level.
+      realtimeStage = 'opening your microphone';
+      if (!navigator.mediaDevices?.getUserMedia) {
+        throw new Error('This browser does not allow microphone access here. Use HTTPS or localhost and allow microphone permission.');
       }
 
       const peer = new RTCPeerConnection();
@@ -887,20 +719,34 @@ export function ChatPage() {
         }
       };
 
+      realtimeStage = 'connecting to the realtime voice service';
       const offer = await peer.createOffer();
       await peer.setLocalDescription(offer);
-      const answer = await fetch('https://api.openai.com/v1/realtime/calls', {
-        method: 'POST',
-        body: offer.sdp,
-        headers: {
-          Authorization: `Bearer ${clientSecret}`,
-          'Content-Type': 'application/sdp',
-        },
+      await new Promise<void>((resolve, reject) => {
+        if (peer.iceGatheringState === 'complete') {
+          resolve();
+          return;
+        }
+
+        const timeout = window.setTimeout(() => {
+          peer.removeEventListener('icegatheringstatechange', handleIceGatheringStateChange);
+          reject(new Error('The realtime connection timed out while preparing the microphone connection.'));
+        }, 10000);
+        const handleIceGatheringStateChange = () => {
+          if (peer.iceGatheringState !== 'complete') return;
+          window.clearTimeout(timeout);
+          peer.removeEventListener('icegatheringstatechange', handleIceGatheringStateChange);
+          resolve();
+        };
+        peer.addEventListener('icegatheringstatechange', handleIceGatheringStateChange);
       });
-      if (!answer.ok) {
-        throw new Error(`Realtime connection failed (${answer.status}).`);
+
+      if (!peer.localDescription?.sdp) {
+        throw new Error('The browser did not produce a valid microphone connection offer.');
       }
-      await peer.setRemoteDescription({ type: 'answer', sdp: await answer.text() });
+
+      const answerSdp = await api.connectRealtime(peer.localDescription.sdp);
+      await peer.setRemoteDescription({ type: 'answer', sdp: answerSdp });
       realtimePeerRef.current = peer;
       realtimeChannelRef.current = channel;
       realtimeAudioRef.current = audio;
@@ -908,7 +754,7 @@ export function ChatPage() {
       setListening(true);
     } catch (err) {
       stopRealtimeVoice();
-      setError(err instanceof Error ? err.message : 'Live voice could not be started. Please try again.');
+      setError(err instanceof Error ? `Live Agent: ${realtimeStage}. ${err.message}` : `Live Agent: ${realtimeStage}. Please try again.`);
     }
   };
 
@@ -1171,15 +1017,14 @@ export function ChatPage() {
               onChange={(e) => {
                 setInput(e.target.value);
                 if (e.target.value.trim() && listening) {
-                  recognitionRef.current?.stop();
-                  setListening(false);
+                  stopRealtimeVoice();
                 }
               }}
               placeholder="Type or speak your message..."
               disabled={loading}
             />
             <span className={styles.voiceStatus}>
-              {listening ? 'Listening...' : 'Tap the mic to talk'}
+              {listening ? 'Live conversation active...' : 'Tap the mic for live voice'}
             </span>
           </div>
           <button

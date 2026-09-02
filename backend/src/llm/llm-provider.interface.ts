@@ -16,4 +16,6 @@ export interface ILlmProvider {
   generateResponse(context: object, template: string): Promise<string>;
   /** Conversational multi-turn chat; falls back to single-turn if unsupported. */
   chat(messages: ConversationMessage[]): Promise<string>;
+  /** Rewrites a structured/templated draft into a warm, flowing, markdown-free human reply, preserving all facts exactly. */
+  humanize(draftMessage: string): Promise<string>;
 }

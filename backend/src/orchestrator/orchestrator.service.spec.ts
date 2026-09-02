@@ -55,6 +55,7 @@ describe('OrchestratorService', () => {
         }),
       ),
       chat: jest.fn().mockResolvedValue('I can help with that.'),
+      humanize: jest.fn().mockImplementation(async (draft: string) => draft),
     };
 
     profileService = new ProfileService();
@@ -186,6 +187,7 @@ describe('OrchestratorService', () => {
       detectIntent: detectIntentMock,
       generateResponse: jest.fn().mockResolvedValue(''),
       chat: chatMock,
+      humanize: jest.fn().mockImplementation(async (draft: string) => draft),
     };
     orchestrator = new OrchestratorService(
       llmProvider,
