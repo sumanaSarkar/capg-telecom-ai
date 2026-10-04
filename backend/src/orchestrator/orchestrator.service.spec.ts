@@ -330,6 +330,17 @@ describe('OrchestratorService', () => {
     expect(followUp.finalMessage).toContain('telecom services');
   });
 
+  it('politely declines non-telecom requests and steers into a telecom question', async () => {
+    for (const message of ['Suggest me a pizza shop near me', 'I want to eat ice cream', 'I want to watch a movie tonight', 'recommend a good hotel']) {
+      const result = await orchestrator.ask({ message, customerId: 'cust-offtopic' });
+
+      expect(result.recommendation).toBeUndefined();
+      expect(result.stage).toBe('complete');
+      expect(result.finalMessage).toContain("that's not something I can help with");
+      expect(result.finalMessage).toMatch(/\?$/);
+    }
+  });
+
   it('uses conversational chat for unrelated requests', async () => {
     const result = await orchestrator.ask({
       message: 'pasta recipe',
@@ -337,7 +348,7 @@ describe('OrchestratorService', () => {
     });
 
     expect(result.stage).toBe('complete');
-    expect(result.finalMessage).toContain('I hear you. I focus on telecom');
+    expect(result.finalMessage).toContain("that's not something I can help with");
     expect(result.finalMessage).toContain('How much mobile data do you use');
     expect(llmProvider.chat).not.toHaveBeenCalled();
   });

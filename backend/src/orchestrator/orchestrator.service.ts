@@ -91,6 +91,7 @@ export class OrchestratorService {
   private readonly logger = new Logger(OrchestratorService.name);
   private readonly communicationHistory: AgentCommunicationTrace[] = [];
   private readonly conversationHistoryByCustomer = new Map<string, ConversationMessage[]>();
+  private readonly recentAsks = new Map<string, { message: string; at: number; response: OrchestratorResponse }>();
 
   constructor(
     @Inject(LLM_PROVIDER) private readonly llmProvider: ILlmProvider,
@@ -120,6 +121,12 @@ export class OrchestratorService {
   async ask(dto: AskDto): Promise<OrchestratorResponse> {
     const action: AskAction = dto.action ?? 'ask';
 
+    // A duplicate delivery of the same utterance must not advance the conversation twice.
+    const recent = this.recentAsks.get(dto.customerId);
+    if (action === 'ask' && recent && recent.message === dto.message && Date.now() - recent.at < 3000) {
+      return recent.response;
+    }
+
     // Step 1: detect intent & required agents via the LLM provider.
     const detected = await this.llmProvider.detectIntent(dto.message);
     const isTelecomRoamingRequest = this.isTelecomRoamingRequest(dto.message);
@@ -148,6 +155,9 @@ export class OrchestratorService {
     response = this.validateTelecomResponse(dto, response);
 
     this.recordCommunicationTrace(dto, response);
+    if (action === 'ask') {
+      this.recentAsks.set(dto.customerId, { message: dto.message, at: Date.now(), response });
+    }
     return response;
   }
 
@@ -353,27 +363,25 @@ export class OrchestratorService {
   private isTelecomRelatedRequest(message: string): boolean {
     const normalized = this.normalizeText(message);
     const telecomTerms = [
-      'plan', 'plans', 'recharge', 'topup', 'billing', 'bill', 'invoice',
+      'plan', 'plans', 'recharge', 'topup', 'billing', 'bill', 'bills', 'invoice',
       'payment', 'pay', 'roaming', 'esim', 'sim', 'support', 'ticket',
-      'profile', 'account', 'analytics', 'usage', 'data', 'call', 'minutes',
-      'mobile', 'network', 'service', 'internet', 'bundle', 'package',
-      'cheap', 'affordable', 'budget', 'travel', 'abroad', 'international',
-      'stream', 'netflix', 'hotstar', 'ott', 'gaming', 'decide', 'manage',
-      'set me up', 'set up', 'upgrade', 'recommend', 'suggest',
+      'profile', 'account', 'analytics', 'usage', 'data', 'call', 'calls', 'calling', 'minutes',
+      'mobile', 'network', 'internet', 'bundle', 'travel', 'abroad', 'international',
+      'netflix', 'hotstar', 'ott', 'upgrade', 'sms', 'wifi', 'broadband', 'signal', 'telecom',
+      'carrier', 'airtel', 'jio', 'balance', 'validity', 'prepaid', 'postpaid',
     ];
-    return telecomTerms.some((term) => normalized.includes(term));
+    return telecomTerms.some((term) => new RegExp(`\\b${term}\\b`).test(normalized));
   }
 
   private isLifestyleTelecomNeed(message: string): boolean {
     const normalized = this.normalizeText(message);
     const lifestyleSignals = [
-      'connected', 'connectivity', 'stay connected', 'family connected', 'work from home',
-      'entertainment', 'streaming', 'watch', 'calls', 'data usage', 'internet',
-      'travel', 'roaming', 'abroad', 'international', 'household', 'family', 'work',
-      'mobile', 'network', 'signal', 'wifi', 'hotspot', 'business', 'professional',
+      'connected', 'connectivity', 'stay connected', 'internet', 'data usage', 'streaming',
+      'travel', 'roaming', 'abroad', 'international', 'work from home', 'mobile', 'network',
+      'signal', 'wifi', 'hotspot',
     ];
 
-    const hasLifestyleSignal = lifestyleSignals.some((term) => normalized.includes(term));
+    const hasLifestyleSignal = lifestyleSignals.some((term) => new RegExp(`\\b${term}\\b`).test(normalized));
     const hasNeedVerb = /(need|want|looking for|need something|help me|get|find|choose|pick)/.test(normalized);
     const hasMultiUseContext = /(work|travel|entertainment|stream|family|household|business|gaming)/.test(normalized);
 
@@ -414,7 +422,7 @@ export class OrchestratorService {
       [/\b(budget|spend|cost)\b/i, /[$₹]|\b\d+\b|budget|not sure|flexible/i],
       [/\b(data|gb|usage)\b/i, /\b\d+\s*(?:gb|gigabytes?)\b|data|usage|not sure/i],
       [/\b(call|minute|voice|talk time)\b/i, /\b\d+\b|call|minute|voice|unlimited|not sure/i],
-      [/\b(roam|travel|abroad|destination|country)\b/i, /\b[a-z]{3,}\b|not sure/i],
+      [/\b(roam|travel|abroad|destination|country)\b/i, /\b(?:often|rarely|sometimes|never|occasionally|yes|no|home|mostly|abroad|travel|trips?|roaming|international|countr(?:y|ies)|not sure)\b/i],
       [/\b(family|people|lines|individual|yourself)\b/i, /\b\d+\b|family|people|line|individual|myself|myself|not sure/i],
       [/\b(stream|streaming|netflix|ott)\b/i, /stream|netflix|ott|video|not sure/i],
       [/\b(work|remote|home)\b/i, /work|remote|home|video call|not sure/i],
@@ -660,7 +668,13 @@ export class OrchestratorService {
 
     if (shouldUseConversationChat) {
       if (!isTelecomRelated && !isLifestyleTelecomNeed && !isPlanDiscoveryFollowUp) {
-        const finalMessage = 'I hear you. I focus on telecom services, and I can help you choose a suitable plan. How much mobile data do you use in a typical month?';
+        const redirectQuestions = [
+          'How much mobile data do you use in a typical month?',
+          'What monthly budget would suit you for your mobile plan?',
+          'Do you travel abroad often, or do you mostly need calls and data at home?',
+        ];
+        const priorTurns = (this.conversationHistoryByCustomer.get(dto.customerId) ?? []).length;
+        const finalMessage = `Sorry, that's not something I can help with — I focus on telecom services. I'd be glad to help you find the right plan though. ${redirectQuestions[Math.floor(priorTurns / 2) % redirectQuestions.length]}`;
         this.appendConversationTurn(dto.customerId, { role: 'user', content: dto.message });
         this.appendConversationTurn(dto.customerId, { role: 'assistant', content: finalMessage });
         return { intent, agents, finalMessage, stage: 'complete' };

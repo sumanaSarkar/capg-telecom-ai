@@ -312,6 +312,7 @@ export function ChatPage() {
   const realtimeAudioRef = useRef<HTMLAudioElement | null>(null);
   const realtimePendingCallsRef = useRef<Map<string, string>>(new Map());
   const latestRealtimeTranscriptRef = useRef('');
+  const handledTranscriptItemsRef = useRef<Set<string>>(new Set());
   const tourismReplacementPendingRef = useRef(false);
   const suppressRealtimeOutputRef = useRef(false);
 
@@ -706,9 +707,14 @@ export function ChatPage() {
           call_id?: string;
           name?: string;
           arguments?: string;
+          item_id?: string;
           item?: { type?: string; call_id?: string; name?: string };
         };
         if (realtimeEvent.type === 'conversation.item.input_audio_transcription.completed' && realtimeEvent.transcript?.trim()) {
+          if (realtimeEvent.item_id) {
+            if (handledTranscriptItemsRef.current.has(realtimeEvent.item_id)) return;
+            handledTranscriptItemsRef.current.add(realtimeEvent.item_id);
+          }
           const transcript = realtimeEvent.transcript.trim();
           latestRealtimeTranscriptRef.current = transcript;
           suppressRealtimeOutputRef.current = false;
