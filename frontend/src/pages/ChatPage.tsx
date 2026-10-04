@@ -9,7 +9,7 @@ import { SuccessCard } from '../components/chat/SuccessCard';
 import { ErrorMessage } from '../components/common/ErrorMessage';
 import { LoadingSpinner } from '../components/common/LoadingSpinner';
 import { useAuth } from '../hooks/useAuth';
-import { useChat } from '../hooks/useChat';
+import { unlockVoicePlayback, useChat } from '../hooks/useChat';
 import { api } from '../services/api';
 import type { ChatMessage } from '../hooks/useChat';
 import type { AgentCommunicationTrace, OrchestratorResponse } from '../services/types';
@@ -37,6 +37,12 @@ const FLOW_NODE_LAYOUT = [
   { x: 20, y: 76 },
   { x: 62, y: 80 },
 ] as const;
+
+const TOURISM_CONTENT_PATTERN = /\b(tourist attractions?|sightseeing|itinerar(?:y|ies)|day[-\s]?wise|travel schedules?|hotel(?:s| suggestions?)?|restaurant(?:s| suggestions?)?|cruise(?:s)?|dinner(?:s)?|vacation (?:plan|guide)|destination guide)\b/i;
+
+function containsTourismContent(text: string): boolean {
+  return TOURISM_CONTENT_PATTERN.test(text);
+}
 
 interface FlowDiagramNode {
   key: string;
@@ -305,6 +311,9 @@ export function ChatPage() {
   const realtimeStreamRef = useRef<MediaStream | null>(null);
   const realtimeAudioRef = useRef<HTMLAudioElement | null>(null);
   const realtimePendingCallsRef = useRef<Map<string, string>>(new Map());
+  const latestRealtimeTranscriptRef = useRef('');
+  const tourismReplacementPendingRef = useRef(false);
+  const suppressRealtimeOutputRef = useRef(false);
 
   useEffect(() => {
     threadRef.current?.scrollTo({ top: threadRef.current.scrollHeight, behavior: 'smooth' });
@@ -614,6 +623,9 @@ export function ChatPage() {
     realtimePeerRef.current = null;
     realtimeStreamRef.current = null;
     realtimePendingCallsRef.current.clear();
+    latestRealtimeTranscriptRef.current = '';
+    tourismReplacementPendingRef.current = false;
+    suppressRealtimeOutputRef.current = false;
     setVoiceMode(false);
     setListening(false);
   };
@@ -656,6 +668,7 @@ export function ChatPage() {
       return;
     }
 
+    unlockVoicePlayback();
     let realtimeStage = 'creating a realtime session';
 
     try {
@@ -664,17 +677,22 @@ export function ChatPage() {
       const session = await api.createRealtimeSession(customerId);
       realtimeSessionRef.current = session;
       // Current Realtime "client secrets" API returns { value, session, expires_at } at the top level.
+      const clientSecret = typeof session.value === 'string' ? session.value : '';
+      if (!clientSecret) {
+        throw new Error('The realtime session did not return a client secret.');
+      }
       realtimeStage = 'opening your microphone';
       if (!navigator.mediaDevices?.getUserMedia) {
         throw new Error('This browser does not allow microphone access here. Use HTTPS or localhost and allow microphone permission.');
       }
 
       const peer = new RTCPeerConnection();
-      const audio = new Audio();
-      audio.autoplay = true;
+      const mutedAudio = new Audio();
+      mutedAudio.autoplay = true;
+      mutedAudio.muted = true;
       peer.ontrack = (event) => {
-        audio.srcObject = event.streams[0];
-        void audio.play().catch(() => {});
+        mutedAudio.srcObject = event.streams[0];
+        void mutedAudio.play().catch(() => {});
       };
 
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
@@ -691,10 +709,44 @@ export function ChatPage() {
           item?: { type?: string; call_id?: string; name?: string };
         };
         if (realtimeEvent.type === 'conversation.item.input_audio_transcription.completed' && realtimeEvent.transcript?.trim()) {
-          setMessages((prev) => [...prev, { id: crypto.randomUUID(), role: 'user', text: realtimeEvent.transcript!.trim() }]);
+          const transcript = realtimeEvent.transcript.trim();
+          latestRealtimeTranscriptRef.current = transcript;
+          suppressRealtimeOutputRef.current = false;
+          setMessages((prev) => [...prev, { id: crypto.randomUUID(), role: 'user', text: transcript }]);
+
+          suppressRealtimeOutputRef.current = true;
+          if (tourismReplacementPendingRef.current) return;
+
+          tourismReplacementPendingRef.current = true;
+          void api.ask(transcript, customerId, 'ask')
+            .then((response) => appendAssistantMessage(response, true, transcript))
+            .catch(() => setError('Live Agent: unable to generate a telecom-focused response. Please try again.'))
+            .finally(() => {
+              tourismReplacementPendingRef.current = false;
+            });
         }
         if (realtimeEvent.type === 'response.audio_transcript.done' && realtimeEvent.transcript?.trim()) {
-          setMessages((prev) => [...prev, { id: crypto.randomUUID(), role: 'assistant', text: realtimeEvent.transcript!.trim() }]);
+          const responseTranscript = realtimeEvent.transcript.trim();
+          if (suppressRealtimeOutputRef.current) return;
+          if (containsTourismContent(responseTranscript)) {
+            if (tourismReplacementPendingRef.current || !latestRealtimeTranscriptRef.current) return;
+
+            tourismReplacementPendingRef.current = true;
+            realtimeChannelRef.current?.send(JSON.stringify({ type: 'response.cancel' }));
+            if (realtimeAudioRef.current) {
+              realtimeAudioRef.current.srcObject = null;
+            }
+
+            void api.ask(latestRealtimeTranscriptRef.current, customerId, 'ask')
+              .then((response) => appendAssistantMessage(response, true, latestRealtimeTranscriptRef.current))
+              .catch(() => setError('Live Agent: unable to generate a telecom-focused response. Please try again.'))
+              .finally(() => {
+                tourismReplacementPendingRef.current = false;
+              });
+            return;
+          }
+
+          setMessages((prev) => [...prev, { id: crypto.randomUUID(), role: 'assistant', text: responseTranscript }]);
         }
         if (realtimeEvent.type === 'response.output_item.added' && realtimeEvent.item?.type === 'function_call') {
           const { call_id, name } = realtimeEvent.item;
@@ -745,11 +797,13 @@ export function ChatPage() {
         throw new Error('The browser did not produce a valid microphone connection offer.');
       }
 
-      const answerSdp = await api.connectRealtime(peer.localDescription.sdp);
+      const answerSdp = await api.connectRealtime(peer.localDescription.sdp, clientSecret);
       await peer.setRemoteDescription({ type: 'answer', sdp: answerSdp });
       realtimePeerRef.current = peer;
       realtimeChannelRef.current = channel;
-      realtimeAudioRef.current = audio;
+      // Realtime audio is only a muted transport for reliable transcription. Only the
+      // validated backend telecom response is spoken through the TTS path.
+      realtimeAudioRef.current = mutedAudio;
       setVoiceMode(true);
       setListening(true);
     } catch (err) {

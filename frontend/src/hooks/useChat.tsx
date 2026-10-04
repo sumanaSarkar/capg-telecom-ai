@@ -6,6 +6,18 @@ import { useAuth } from './useAuth';
 
 const STORAGE_KEY_PREFIX = 'telecom-ai-chat-v2';
 const MAX_CHAT_TURNS = 5;
+let voiceAudioContext: AudioContext | null = null;
+
+export function unlockVoicePlayback(): void {
+  if (typeof window === 'undefined' || !window.AudioContext) {
+    return;
+  }
+
+  voiceAudioContext ??= new window.AudioContext();
+  if (voiceAudioContext.state === 'suspended') {
+    void voiceAudioContext.resume().catch(() => {});
+  }
+}
 
 export interface ChatMessage {
   id: string;
@@ -100,40 +112,50 @@ function buildNaturalAgentVoiceReply(response: OrchestratorResponse): string {
   return normalizedText;
 }
 
-async function speakAssistantMessage(
+async function prepareSpeech(
   response: OrchestratorResponse,
   overrideText?: string,
   sourceUserText?: string,
-) {
+): Promise<(() => void) | null> {
   const text = (overrideText ?? response.finalMessage ?? '').trim();
   if (!text) {
-    return;
+    return null;
   }
 
   try {
     const voice = pickOppositeVoice(sourceUserText);
     const blob = await api.synthesizeSpeech(text, voice);
-    const audioUrl = URL.createObjectURL(blob);
-    const audio = new Audio(audioUrl);
-    audio.onended = () => URL.revokeObjectURL(audioUrl);
-    audio.onerror = () => URL.revokeObjectURL(audioUrl);
-    await audio.play();
-    return;
+    if (typeof window === 'undefined' || !window.AudioContext) {
+      throw new Error('Web Audio is not available.');
+    }
+
+    voiceAudioContext ??= new window.AudioContext();
+    if (voiceAudioContext.state === 'suspended') {
+      await voiceAudioContext.resume();
+    }
+
+    const context = voiceAudioContext;
+    const audioBuffer = await context.decodeAudioData(await blob.arrayBuffer());
+    return () => {
+      const source = context.createBufferSource();
+      source.buffer = audioBuffer;
+      source.connect(context.destination);
+      source.start();
+    };
   } catch {
-    // Fallback to browser speech synthesis if the OpenAI TTS route is unavailable.
+    // Fall back to browser speech if TTS or Web Audio playback is unavailable.
   }
 
   if (typeof window === 'undefined' || typeof window.speechSynthesis === 'undefined') {
-    return;
+    return null;
   }
 
-  window.speechSynthesis.cancel();
-  const utterance = new SpeechSynthesisUtterance(text);
-  utterance.lang = 'en-US';
-  utterance.rate = 1;
-  utterance.pitch = 1;
-  utterance.volume = 1;
-  window.speechSynthesis.speak(utterance);
+  return () => {
+    window.speechSynthesis.cancel();
+    const utterance = new SpeechSynthesisUtterance(text);
+    utterance.lang = 'en-US';
+    window.speechSynthesis.speak(utterance);
+  };
 }
 
 function getStorageKey(customerId?: string): string {
@@ -220,12 +242,29 @@ export function ChatProvider({ children }: { children: ReactNode }) {
     shouldSpeak = false,
     sourceUserText?: string,
   ) => {
-    setMessages((prev) => trimMessages([...prev, { id: crypto.randomUUID(), role: 'assistant', response }]));
+    const showMessage = () =>
+      setMessages((prev) => trimMessages([...prev, { id: crypto.randomUUID(), role: 'assistant', response }]));
 
-    if (shouldSpeak) {
-      const voiceText = buildNaturalAgentVoiceReply(response);
-      void speakAssistantMessage(response, voiceText, sourceUserText);
+    if (!shouldSpeak) {
+      showMessage();
+      return;
     }
+
+    // Reveal the text only once audio is ready so text and voice start together.
+    const voiceText = buildNaturalAgentVoiceReply(response);
+    const speech = prepareSpeech(response, voiceText, sourceUserText);
+    const timedOut = Symbol('timeout');
+    void Promise.race([
+      speech,
+      new Promise<typeof timedOut>((resolve) => window.setTimeout(() => resolve(timedOut), 6000)),
+    ]).then((result) => {
+      showMessage();
+      if (typeof result === 'function') {
+        result();
+      } else if (result === timedOut) {
+        void speech.then((play) => play?.());
+      }
+    });
   };
 
   const clearChat = () => {

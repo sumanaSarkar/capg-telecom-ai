@@ -1,6 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ILlmProvider, IntentResult } from './llm-provider.interface';
-import { buildTelecomAgentPrompt, TELECOM_SERVICE_CATALOG } from './telecom-agent-config';
+import { TELECOM_SERVICE_CATALOG } from './telecom-agent-config';
 
 interface KeywordMapping {
   keyword: string;
@@ -137,6 +137,15 @@ export class MockLlmProvider implements ILlmProvider {
       );
     }
 
+    if (
+      /\b(dubai|uae|thailand|japan|china|usa|uk|singapore|australia|france|germany)\b/.test(normalized) &&
+      /\b(plan|package|good plan)\b/.test(normalized)
+    ) {
+      return Promise.resolve(
+        'I can help with a telecom plan for your trip, including roaming data, international calls, SMS, eSIM, and hotspot connectivity. How many days will you be in Thailand?',
+      );
+    }
+
     if (/\b(plan|bundle|recommend|custom|ott|netflix|roaming|unlimited calls|unlimited call)\b/.test(normalized)) {
       const catalogPreview = TELECOM_SERVICE_CATALOG.slice(0, 4)
         .map((item) => `${item.name} (${item.price})`)
@@ -159,7 +168,7 @@ export class MockLlmProvider implements ILlmProvider {
     }
 
     return Promise.resolve(
-      `${buildTelecomAgentPrompt().split('\n')[0]} I can help you with a tailored plan, add-ons such as unlimited calls, roaming, Netflix/OTT bundles, and premium support. What do you need today?`,
+      'I can help with telecom needs only, including plans, roaming, connectivity, broadband, eSIM, billing, and support. I can tailor a plan or add-ons such as unlimited calls, Netflix/OTT bundles, and premium support. Which telecom service would be most useful for you today?',
     );
   }
 

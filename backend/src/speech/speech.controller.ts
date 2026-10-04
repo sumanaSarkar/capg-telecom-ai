@@ -2,6 +2,7 @@ import {
   BadRequestException,
   Body,
   Controller,
+  Headers,
   HttpCode,
   HttpStatus,
   Post,
@@ -102,15 +103,22 @@ export class SpeechController {
   @Post('realtime/connect')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Exchange a browser SDP offer for an OpenAI Realtime SDP answer' })
-  async connectRealtime(@Body() sdp: string, @Res() res: Response): Promise<void> {
+  async connectRealtime(
+    @Body() sdp: string,
+    @Headers('x-realtime-client-secret') clientSecret: string,
+    @Res() res: Response,
+  ): Promise<void> {
     if (typeof sdp !== 'string' || !sdp.trim()) {
       throw new BadRequestException('A realtime SDP offer is required.');
+    }
+    if (!clientSecret?.trim()) {
+      throw new BadRequestException('A realtime client secret is required.');
     }
     if (!this.speechService.isAvailable()) {
       throw new ServiceUnavailableException('Real-time voice requires OPENAI_API_KEY.');
     }
 
-    const answer = await this.speechService.exchangeRealtimeSdp(sdp);
+    const answer = await this.speechService.exchangeRealtimeSdp(sdp, clientSecret);
     res.setHeader('Content-Type', 'application/sdp');
     res.end(answer);
   }

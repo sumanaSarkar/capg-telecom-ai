@@ -17,6 +17,7 @@ Given a user message, return a JSON object with:
 
 Rules:
 - If the request involves plan, recharge, or analytics, always include "profile", "analytics", and "plan" agents.
+- If the request mentions travel, a destination, trip duration, vacation, business travel, study abroad, relocation, or the word "plan" in a travel context, return intent "TELECOM_ROAMING" and include "roaming", "profile", "analytics", and "plan" agents.
 - Return ONLY valid JSON, no extra text.`;
 
 const SYSTEM_PROMPT_CHAT = buildTelecomAgentPrompt();
@@ -117,6 +118,8 @@ export class OpenAiLlmProvider implements ILlmProvider {
             role: 'system',
             content:
               'You are Telly, a concise and friendly telecom assistant. ' +
+              'Keep the reply strictly within telecom products, plans, roaming, data, voice, eSIM, billing, network support, or connectivity. ' +
+              'Never add tourism, itineraries, sightseeing, hotels, restaurants, or travel guidance. ' +
               'Rephrase the following draft message into a natural, warm single sentence. ' +
               'Preserve all data values exactly. Return only the rephrased sentence, no quotes.',
           },

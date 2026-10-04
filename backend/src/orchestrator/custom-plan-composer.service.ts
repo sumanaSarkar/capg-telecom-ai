@@ -23,6 +23,7 @@ export interface CustomPlan {
   discountNote?: string;
   exclusiveBadge?: string;
   estimatedSavings?: number;
+  provider?: string;
 }
 
 @Injectable()
@@ -34,8 +35,10 @@ export class CustomPlanComposerService {
     intelligence: CustomerIntelligence,
   ): CustomPlan {
     const normalized = message.toLowerCase();
+    const provider = this.detectProvider(profile.currentNetwork);
     const components: CustomPlanComponent[] = [];
     const destination = this.resolveRoamingDestination(normalized);
+    const tripDays = this.resolveTripDays(normalized);
 
     // 1. Determine base data tier from usage patterns
     const baseData = this.resolveDataTier(analytics, normalized);
@@ -46,18 +49,24 @@ export class CustomPlanComposerService {
     components.push(voiceTier);
 
     // 3. Attach catalog-driven add-ons relevant to the request
-    const relevantAddOns = this.selectRelevantAddOns(normalized, intelligence, destination);
+    const relevantAddOns = this.selectRelevantAddOns(normalized, intelligence, destination, tripDays);
     components.push(...relevantAddOns);
 
-    const basePrice = components.reduce((sum, c) => sum + c.monthlyPrice, 0);
-    const discount = this.resolveDiscount(intelligence, components.length);
+    const providerComponents = components.map((component) => ({
+      ...component,
+      provider,
+      description: `${component.description} Available on ${provider}.`,
+    }));
+
+    const basePrice = providerComponents.reduce((sum, c) => sum + c.monthlyPrice, 0);
+    const discount = this.resolveDiscount(intelligence, providerComponents.length);
     const finalPrice = Math.max(basePrice - discount, 0);
 
     const dataGB = baseData.tag === 'unlimited' ? -1 : this.parseDataGB(baseData);
     const callMinutes = voiceTier.tag === 'unlimited-calls' ? -1 : this.parseCallMinutes(voiceTier);
-    const features = this.buildFeatureList(components, normalized);
+    const features = this.buildFeatureList(providerComponents, normalized);
 
-    const planName = this.buildPlanName(intelligence, components);
+    const planName = this.buildPlanName(intelligence, providerComponents);
     const exclusiveBadge = this.buildBadge(intelligence);
     const discountNote = discount > 0
       ? `Exclusive offer for ${profile.name}: save ₹${discount.toFixed(0)}/month`
@@ -72,11 +81,22 @@ export class CustomPlanComposerService {
       callMinutes,
       price: finalPrice,
       features,
-      components,
+      components: providerComponents,
       discountNote,
       exclusiveBadge,
       estimatedSavings,
+      provider,
     };
+  }
+
+  private detectProvider(network: string): string {
+    const normalized = network.trim().toLowerCase().replace(/[._-]+/g, ' ');
+    if (normalized.includes('airtel')) return 'Airtel';
+    if (normalized.includes('jio') || normalized.includes('reliance')) return 'Jio';
+    if (normalized.includes('vodafone') || normalized.includes('idea') || normalized === 'vi') {
+      return 'Vodafone Idea';
+    }
+    return network.trim() || 'Unknown provider';
   }
 
   private resolveDataTier(analytics: CustomerAnalytics, normalized: string): CustomPlanComponent {
@@ -116,6 +136,7 @@ export class CustomPlanComposerService {
     normalized: string,
     intelligence: CustomerIntelligence,
     destination?: string,
+    tripDays?: number,
   ): CustomPlanComponent[] {
     const addOns: CustomPlanComponent[] = [];
     const removedGaming = /\b(remove|without|exclude|drop|no)\b[^.]*\b(gaming|game)\b/.test(normalized);
@@ -160,25 +181,37 @@ export class CustomPlanComposerService {
           tag: platform.toLowerCase().replace(/[^a-z0-9]+/g, '-'),
         })),
       ];
-      return destination ? [this.buildRoamingComponent(destination), ...platformAddOns] : platformAddOns;
+      return destination ? [this.buildRoamingComponent(destination, tripDays), ...platformAddOns] : platformAddOns;
     }
 
-    return destination ? [this.buildRoamingComponent(destination), ...relevantAddOns] : relevantAddOns;
+    return destination ? [this.buildRoamingComponent(destination, tripDays), ...relevantAddOns] : relevantAddOns;
+  }
+
+  private resolveTripDays(normalized: string): number | undefined {
+    const match = normalized.match(/\b(\d+)\s*days?\b/);
+    return match ? parseInt(match[1], 10) : undefined;
   }
 
   private resolveRoamingDestination(normalized: string): string | undefined {
     const destinations = [
       'hawaii', 'sydney', 'austria', 'liverpool', 'manila', 'philippines', 'china', 'asia', 'japan', 'tokyo', 'osaka', 'kenya', 'bhutan', 'usa', 'united states',
-      'uk', 'united kingdom', 'uae', 'dubai', 'france', 'germany', 'spain',
+      'uk', 'united kingdom', 'uae', 'dubai', 'thailand', 'maldives', 'france', 'germany', 'spain',
     ];
-    return destinations.find((destination) => normalized.includes(destination));
+    const knownDestination = destinations.find((destination) => normalized.includes(destination));
+    if (knownDestination) return knownDestination;
+
+    const destinationMatch = normalized.match(
+      /\b(?:going\s+to|travell?ing\s+to|visiting|visit|moving\s+to|relocating\s+to|studying\s+in)\s+([a-z]+(?:\s+[a-z]+){0,2}?)(?=\s+for\s+\d+\s+days?\b|\s+(?:and|,|give|show|need|want|what)\b|$)/i,
+    );
+    return destinationMatch?.[1]?.trim();
   }
 
-  private buildRoamingComponent(destination: string): CustomPlanComponent {
+  private buildRoamingComponent(destination: string, tripDays?: number): CustomPlanComponent {
+    const duration = tripDays ? ` for ${tripDays} days` : '';
     if (destination === 'hawaii') {
       return {
         name: 'USA Hawaii Travel Roaming Pack',
-        description: 'USA travel connectivity for Hawaii with roaming data, calling, SMS, and usage alerts tailored to your trip.',
+        description: `USA travel connectivity for Hawaii${duration} with roaming data, calling, SMS, and usage alerts tailored to your trip.`,
         monthlyPrice: 399,
         tag: 'usa-hawaii-roaming',
       };
@@ -187,7 +220,7 @@ export class CustomPlanComposerService {
     if (destination === 'sydney') {
       return {
         name: 'Australia Sydney Travel Roaming Pack',
-        description: 'Australia travel connectivity for Sydney with roaming data, calling, SMS, and usage alerts tailored to your trip.',
+        description: `Australia travel connectivity for Sydney${duration} with roaming data, calling, SMS, and usage alerts tailored to your trip.`,
         monthlyPrice: 399,
         tag: 'australia-sydney-roaming',
       };
@@ -196,7 +229,7 @@ export class CustomPlanComposerService {
     if (destination === 'austria') {
       return {
         name: 'Europe Austria Travel Roaming Pack',
-        description: 'Europe travel connectivity for Austria with roaming data, calling, SMS, and usage alerts tailored to your trip.',
+        description: `Europe travel connectivity for Austria${duration} with roaming data, calling, SMS, and usage alerts tailored to your trip.`,
         monthlyPrice: 399,
         tag: 'europe-austria-roaming',
       };
@@ -205,7 +238,7 @@ export class CustomPlanComposerService {
     if (destination === 'liverpool') {
       return {
         name: 'UK Liverpool Travel Roaming Pack',
-        description: 'UK travel connectivity for Liverpool with roaming data, calling, SMS, and usage alerts tailored to your trip.',
+        description: `UK travel connectivity for Liverpool${duration} with roaming data, calling, SMS, and usage alerts tailored to your trip.`,
         monthlyPrice: 399,
         tag: 'uk-liverpool-roaming',
       };
@@ -214,7 +247,7 @@ export class CustomPlanComposerService {
     if (destination === 'manila' || destination === 'philippines') {
       return {
         name: 'Manila Travel Roaming Pack',
-        description: 'Philippines travel connectivity with roaming data, calling, SMS, and usage alerts tailored to your Manila trip.',
+        description: `Philippines travel connectivity${duration} with roaming data, calling, SMS, and usage alerts tailored to your Manila trip.`,
         monthlyPrice: 399,
         tag: 'manila-roaming',
       };
@@ -224,7 +257,7 @@ export class CustomPlanComposerService {
       const label = destination === 'china' ? 'China' : 'Asia';
       return {
         name: `${label} Travel Roaming Pack`,
-        description: `${label} travel connectivity with roaming data, calling, SMS, and usage alerts for your trip.`,
+        description: `${label} travel connectivity${duration} with roaming data, calling, SMS, and usage alerts for your trip.`,
         monthlyPrice: 399,
         tag: `${destination}-roaming`,
       };
@@ -233,9 +266,18 @@ export class CustomPlanComposerService {
     if (destination === 'japan' || destination === 'tokyo' || destination === 'osaka') {
       return {
         name: 'Japan Roaming Pass',
-        description: 'Japan travel connectivity with roaming data, calls, SMS, and usage alerts for your trip.',
+        description: `Japan travel connectivity${duration} with roaming data, calls, SMS, and usage alerts for your trip.`,
         monthlyPrice: 399,
         tag: 'japan-roaming',
+      };
+    }
+
+    if (destination === 'thailand') {
+      return {
+        name: 'Thailand Roaming Pass',
+        description: `Thailand travel connectivity${duration} with roaming data, international calls, SMS, and usage alerts for your trip.`,
+        monthlyPrice: 399,
+        tag: 'thailand-roaming',
       };
     }
 
@@ -260,7 +302,7 @@ export class CustomPlanComposerService {
     const label = destination === 'united states' ? 'USA' : destination.toUpperCase();
     return {
       name: `${label} Roaming Pass`,
-      description: `Destination roaming data and voice coverage for ${label}; per-minute rates are shown before activation.`,
+      description: `Destination telecom roaming data and voice coverage for ${label}${duration}; per-minute rates are shown before activation.`,
       monthlyPrice: 399,
       tag: `${destination.replace(/\s+/g, '-')}-roaming`,
     };

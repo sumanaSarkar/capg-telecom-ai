@@ -16,6 +16,7 @@ describe('ProfileService', () => {
       email: 'alex@example.com',
       phone: '+1-555-0101',
       plan: 'Basic 5GB',
+      currentNetwork: 'Airtel',
       customerType: 'postpaid',
       kycStatus: 'verified',
       accountBalance: 45.5,

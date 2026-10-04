@@ -198,9 +198,12 @@ export const api = {
     return data;
   },
 
-  connectRealtime: async (sdp: string): Promise<string> => {
+  connectRealtime: async (sdp: string, clientSecret: string): Promise<string> => {
     const { data } = await apiClient.post<string>('/speech/realtime/connect', sdp, {
-      headers: { 'Content-Type': 'application/sdp' },
+      headers: {
+        'Content-Type': 'application/sdp',
+        'X-Realtime-Client-Secret': clientSecret,
+      },
       transformResponse: [(value) => value],
     });
     return data;

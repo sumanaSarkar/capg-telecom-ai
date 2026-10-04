@@ -36,7 +36,7 @@ export class TellyResponseTemplateService {
     if (/decide|manage|behalf|take care|handle|look after|take over/.test(m)) return 'delegate';
     if (/urgent|asap|immediately|right now|quickly|fast|help me now/.test(m)) return 'urgent';
     if (/family|kids|household|everyone|all of us|shared/.test(m)) return 'family';
-    if (/travel|trip|roaming|abroad|europe|usa|international/.test(m)) return 'travel';
+    if (/travel|trip|going to|visiting|roaming|abroad|europe|usa|international|thailand|dubai|uae|japan|china/.test(m)) return 'travel';
     if (/stream|netflix|hotstar|ott|watch|entertainment|movies/.test(m)) return 'entertainment';
     if (/work|business|office|meeting|remote|productivity/.test(m)) return 'business';
     if (/cheap|affordable|budget|save|discount|less|low cost/.test(m)) return 'budget';
@@ -76,7 +76,7 @@ export class TellyResponseTemplateService {
 
   private buildBody(tone: string, intelligence: CustomerIntelligence, customPlan: CustomPlan, price: string, components: string): string {
     const valueStatement = this.valueStatement(tone, intelligence, customPlan);
-    return `${valueStatement}\n\nWhat's included at **${price}**: ${components}.`;
+    return `${valueStatement}\n\nThis offer is built for your current **${customPlan.provider}** network, using only our available ${customPlan.provider} plans and packages.\n\nWhat's included at **${price}**: ${components}.`;
   }
 
   private valueStatement(tone: string, intelligence: CustomerIntelligence, customPlan: CustomPlan): string {
