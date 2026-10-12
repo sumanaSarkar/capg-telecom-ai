@@ -168,6 +168,7 @@ Ask only one focused question per turn, keep momentum, and offer escalation to a
             turn_detection: { type: 'server_vad', create_response: false, interrupt_response: false },
             transcription: {
               model: process.env.OPENAI_TRANSCRIPTION_MODEL || 'gpt-4o-mini-transcribe',
+              language: 'en',
             },
           },
           output: {

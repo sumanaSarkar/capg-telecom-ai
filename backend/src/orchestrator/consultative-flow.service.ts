@@ -259,7 +259,7 @@ export class ConsultativeFlowService {
     return bare ? parseCount(message) : undefined;
   }
 
-  private startTravel(customerId: string, message: string, destination: string): FlowDecision {
+  private startTravel(customerId: string, message: string, destination: string): FlowDecision | null {
     const state: TravelState = { flow: 'travel', destination, retries: 0, opening: message, early: false };
     if (!isKnownPlace(destination)) {
       if (NON_PLACE_START.test(destination) || !TRAVEL_CONTEXT_PATTERN.test(message)) return null;
