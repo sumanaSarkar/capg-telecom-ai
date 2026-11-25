@@ -57,6 +57,12 @@
   line-height: 1.45;
 }
 
+.currencyNote {
+  margin: -0.5rem 0 0.9rem;
+  color: #64748b;
+  font-size: 0.75rem;
+}
+
 /* ---- Custom plan component breakdown ---- */
 .components {
   background: #f8fafc;

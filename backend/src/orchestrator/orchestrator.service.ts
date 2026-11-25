@@ -25,6 +25,7 @@ import { CustomerIntelligenceService } from './customer-intelligence.service';
 import { ConsultativeFlowService } from './consultative-flow.service';
 import type { FlowDecision } from './consultative-flow.service';
 import { CustomPlan, CustomPlanComposerService } from './custom-plan-composer.service';
+import { formatCurrencyAmount } from './currency.utils';
 import { DecisionEngineService } from './decision-engine.service';
 import { RecommendationService } from './recommendation.service';
 
@@ -142,11 +143,9 @@ export class OrchestratorService {
     } else if (action === 'payment_success') {
       response = await this.handlePaymentSuccess(dto, intent, agents);
     } else if (action === 'autopilot_enable') {
-      this.autopilotService.enable(dto.customerId);
-      response = { intent, agents, finalMessage: '✅ Telly Autopilot is now ON. I will automatically handle your bill payments and recharges on your behalf. You can disable this anytime.', stage: 'complete', autopilot: { enabled: true, action: 'enabled' } };
+      response = this.handleAutopilotSetting(dto, intent, agents, true);
     } else if (action === 'autopilot_disable') {
-      this.autopilotService.disable(dto.customerId);
-      response = { intent, agents, finalMessage: '🔒 Telly Autopilot is now OFF. You are back in full control of all payments and recharges.', stage: 'complete', autopilot: { enabled: false, action: 'disabled' } };
+      response = this.handleAutopilotSetting(dto, intent, agents, false);
     } else {
       response = await this.handleAsk(dto, intent, agents);
     }
@@ -271,7 +270,18 @@ export class OrchestratorService {
       return sorted;
     }
 
-    return sorted.slice(-months);
+    const now = new Date();
+    const currentMonthStart = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1);
+    const firstMonthStart = Date.UTC(
+      now.getUTCFullYear(),
+      now.getUTCMonth() - months,
+      1,
+    );
+
+    return sorted.filter((record) => {
+      const date = Date.parse(record.date);
+      return Number.isFinite(date) && date >= firstMonthStart && date < currentMonthStart;
+    });
   }
 
   private isCurrentPlanRequest(message: string): boolean {
@@ -279,9 +289,45 @@ export class OrchestratorService {
   }
 
   private isPayBillRequest(message: string): boolean {
-    return /\b(pay|clear|settle|make)\b.*\b(bill|invoice|due|pending|payment)\b/i.test(message) ||
-      /\b(bill|invoice)\b.*\b(pay|clear|settle)\b/i.test(message) ||
-      /\bpay\s+my\s+bill\b/i.test(message);
+    return /\b(pay(?:ing)?|clear|settle|make)\b.*\b(bill|invoice|due|pending|payment)\b/i.test(message) ||
+      /\b(bill|invoice)\b.*\b(pay(?:ing)?|clear|settle)\b/i.test(message) ||
+      /\bpay(?:ing)?\s+my\s+bill\b/i.test(message);
+  }
+
+  private isAutopilotEnableRequest(message: string): boolean {
+    return /\b(?:enable|turn\s+on|switch\s+on|set\s+up|setup|activate|start)\b.{0,35}\b(?:telly\s+)?autopilot\b/i.test(message) ||
+      /\b(?:enable|turn\s+on|switch\s+on|set\s+up|setup|activate|start)\b.{0,35}\b(?:auto[-\s]?pay|automatic(?:ally)?\s+(?:bill\s+)?payments?|recurring\s+payments?|auto[-\s]?recharge)\b/i.test(message) ||
+      /\b(?:autopilot|auto[-\s]?pay|automatic(?:ally)?\s+(?:bill\s+)?payments?|recurring\s+payments?)\b.{0,25}\b(?:setup|set\s+up|enable|turn\s+on|start)\b/i.test(message);
+  }
+
+  private isAutopilotDisableRequest(message: string): boolean {
+    return /\b(?:disable|turn\s+off|switch\s+off|stop|cancel)\b.{0,35}\b(?:telly\s+)?(?:autopilot|auto[-\s]?pay|automatic(?:ally)?\s+(?:bill\s+)?payments?|recurring\s+payments?|auto[-\s]?recharge)\b/i.test(message);
+  }
+
+  private handleAutopilotSetting(
+    dto: AskDto,
+    intent: string,
+    agents: string[],
+    enabled: boolean,
+  ): OrchestratorResponse {
+    const settings = enabled
+      ? this.autopilotService.enable(dto.customerId)
+      : this.autopilotService.disable(dto.customerId);
+    const finalMessage = enabled
+      ? 'Demo Autopilot is ON for bill and recharge settings. It does not charge real money and has no live payment provider or background scheduler; it only marks a mock bill paid when you ask Telly to process it. Settings reset when the backend restarts. You can turn it off anytime.'
+      : 'Demo Autopilot is OFF. Simulated automatic bill payments and recharges are disabled.';
+
+    this.appendConversationTurn(dto.customerId, { role: 'user', content: dto.message });
+    this.appendConversationTurn(dto.customerId, { role: 'assistant', content: finalMessage });
+
+    return {
+      intent,
+      agents,
+      finalMessage,
+      stage: 'complete',
+      autopilot: { enabled, action: enabled ? 'enabled' : 'disabled' },
+      context: { autopilotSettings: settings, simulated: true, realCharges: false },
+    };
   }
 
   private isEsimStatusRequest(message: string): boolean {
@@ -589,13 +635,15 @@ export class OrchestratorService {
       return 1;
     }
 
-    const monthsMatch = message.match(/\b(?:past|last|previous)\s+(\d+)\s+months?\b/i);
+    const monthsMatch = message.match(
+      /\b(?:past|last|previous)\s+(\d+|one|two|three|four|five)\s+months?\b/i,
+    );
     if (monthsMatch) {
-      return parseInt(monthsMatch[1], 10);
+      return this.parseCount(monthsMatch[1]);
     }
 
-    const looseMatch = message.match(/\b(\d+)\s+months?\b/i);
-    return looseMatch ? parseInt(looseMatch[1], 10) : undefined;
+    const looseMatch = message.match(/\b(\d+|one|two|three|four|five)\s+months?\b/i);
+    return looseMatch ? this.parseCount(looseMatch[1]) : undefined;
   }
 
   private getRequestedBillingCount(message: string): number | undefined {
@@ -604,14 +652,23 @@ export class OrchestratorService {
     }
 
     const billsMatch = message.match(
-      /\b(?:last|past|previous|show|give|fetch|get)\s+(\d+)\s+(?:bills?|invoices?|records?|statements?)\b/i,
+      /\b(?:last|past|previous|show|give|fetch|get)\s+(\d+|one|two|three|four|five)\s+(?:bills?|invoices?|records?|statements?)\b/i,
     );
     if (billsMatch) {
-      return parseInt(billsMatch[1], 10);
+      return this.parseCount(billsMatch[1]);
     }
 
-    const looseBillsMatch = message.match(/\b(\d+)\s+(?:bills?|invoices?)\b/i);
-    return looseBillsMatch ? parseInt(looseBillsMatch[1], 10) : undefined;
+    const looseBillsMatch = message.match(/\b(\d+|one|two|three|four|five)\s+(?:bills?|invoices?)\b/i);
+    return looseBillsMatch ? this.parseCount(looseBillsMatch[1]) : undefined;
+  }
+
+  private parseCount(value: string): number {
+    const number = Number(value);
+    if (Number.isInteger(number)) {
+      return number;
+    }
+
+    return { one: 1, two: 2, three: 3, four: 4, five: 5 }[value.toLowerCase()] ?? 1;
   }
 
   private async handleAsk(
@@ -690,6 +747,14 @@ export class OrchestratorService {
 
     if (this.isPayBillRequest(dto.message)) {
       return this.handlePayBill(dto, intent, agents);
+    }
+
+    if (this.isAutopilotEnableRequest(dto.message)) {
+      return this.handleAutopilotSetting(dto, intent, agents, true);
+    }
+
+    if (this.isAutopilotDisableRequest(dto.message)) {
+      return this.handleAutopilotSetting(dto, intent, agents, false);
     }
 
     if (this.isCurrentPlanRequest(dto.message)) {
@@ -845,7 +910,7 @@ export class OrchestratorService {
     );
 
     // Compose a hyper-personalised plan from components rather than picking a static one.
-    const customPlan = this.customPlanComposerService.compose(
+    const customPlan = await this.customPlanComposerService.compose(
       dto.message,
       profile,
       analytics,
@@ -861,10 +926,6 @@ export class OrchestratorService {
     ]
       .filter(Boolean)
       .join(' ');
-
-    const componentList = customPlan.components
-      .map((c) => `${c.name} (₹${c.monthlyPrice}/mo)`)
-      .join(', ');
 
     const templatedDraft = this.tellyResponseTemplateService.buildRecommendationMessage({
       message: dto.message,
@@ -1023,29 +1084,34 @@ export class OrchestratorService {
     );
 
     const base = decision.composeMessage;
-    const compose = (extra: string): CustomPlan =>
+    const compose = (extra: string): Promise<CustomPlan> =>
       this.customPlanComposerService.compose(`${base} ${extra}`.trim(), profile, analytics, intelligence);
     const heavyData = (decision.dataGB ?? 0) >= 25;
-    const essential = compose('');
-    const balanced = compose(`${heavyData ? '50gb' : '25gb'} international call`);
-    const premium = compose('unlimited data unlimited calls netflix');
+    const [essential, balanced, premium] = await Promise.all([
+      compose(''),
+      compose(`${heavyData ? '50gb' : '25gb'} international call`),
+      compose('unlimited data unlimited calls netflix'),
+    ]);
 
     const firstName = profile.name.split(' ')[0];
     const provider = balanced.provider ?? profile.currentNetwork;
     const place = decision.destination.replace(/\b[a-z]/g, (letter) => letter.toUpperCase());
     const stay = decision.days ? ` for ${decision.days} days` : '';
     const summarize = (plan: CustomPlan) =>
-      `₹${plan.price.toFixed(0)}/month with ${plan.components.slice(0, 3).map((component) => component.name).join(', ')}`;
+      `${formatCurrencyAmount(plan.price, plan.currency)}/month with ${plan.components.slice(0, 3).map((component) => component.name).join(', ')}`;
     const need =
       decision.purpose === 'data' ? 'mostly data' : decision.purpose === 'voice' ? 'mostly calls' : 'both data and calls';
     const offerNote = balanced.discountNote ?? 'Because you are a valued customer, I will keep your current benefits intact while you are away.';
+    const currencyNote = balanced.currencyRateDate
+      ? ` Prices are EUR equivalents converted using ECB reference rates dated ${balanced.currencyRateDate}.`
+      : '';
 
     const finalMessage =
       `${firstName}, ${place}${stay} with ${need} — I have built three options for you, using only ${provider} packs so everything works on your own network:\n` +
       `- Essential: ${summarize(essential)}\n` +
       `- Balanced, my pick for you: ${summarize(balanced)}\n` +
       `- Premium: ${summarize(premium)}\n` +
-      `${offerNote} Tap Activate to take the Balanced plan, or tell me if you want more data, more calling or streaming added.`;
+      `${offerNote}${currencyNote} Tap Activate to take the Balanced plan, or tell me if you want more data, more calling or streaming added.`;
 
     this.appendConversationTurn(dto.customerId, { role: 'user', content: dto.message });
     this.appendConversationTurn(dto.customerId, { role: 'assistant', content: finalMessage });
@@ -1229,11 +1295,11 @@ export class OrchestratorService {
     const bill = pendingBills[0];
 
     if (autopilotEnabled) {
-      // Autopilot ON: Telly pays without asking for confirmation.
+      // Autopilot is a demo flow; this records a simulated payment, not a real charge.
       const payment = this.paymentService.initiatePayment(dto.customerId, bill.id, bill.amount);
       this.paymentService.confirmPayment(payment.paymentId);
-      const billingRecord = this.billingService.recordTransaction(dto.customerId, bill.id, bill.amount);
-      const finalMessage = `✅ Telly Autopilot paid your pending bill of $${bill.amount.toFixed(2)} for "${bill.description}" automatically. Receipt recorded. You are all caught up!`;
+      const billingRecord = this.billingService.markBillPaid(dto.customerId, bill.id);
+      const finalMessage = `Demo Autopilot marked your bill of $${bill.amount.toFixed(2)} for "${bill.description}" as paid in the simulation. No real payment was taken.`;
       this.appendConversationTurn(dto.customerId, { role: 'user', content: dto.message });
       this.appendConversationTurn(dto.customerId, { role: 'assistant', content: finalMessage });
       return {
@@ -1241,7 +1307,7 @@ export class OrchestratorService {
         agents,
         finalMessage,
         stage: 'complete',
-        billingHistory: allRecords,
+        billingHistory: this.billingService.getBillingHistory(dto.customerId),
         autopilot: { enabled: true, action: 'auto-paid' },
         context: { billingRecord, payment },
       };
@@ -1285,11 +1351,12 @@ export class OrchestratorService {
       plan.id,
       plan.price,
     );
+    this.rechargeService.markPendingActivation(dto.customerId, plan.id);
 
     const finalMessage = await this.llmProvider.generateResponse(
       { planName: plan.name, paymentUrl: payment.paymentUrl },
-      'Great choice! Please complete your payment for the {{planName}} plan using the link ' +
-        'below, then confirm once done: {{paymentUrl}}',
+      'The {{planName}} plan is not activated yet. Complete payment using this secure link; ' +
+        'activation is confirmed only after payment succeeds: {{paymentUrl}}',
     );
 
     return {

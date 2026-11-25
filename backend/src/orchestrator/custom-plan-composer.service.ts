@@ -3,6 +3,8 @@ import { CustomerAnalytics } from '../agents/analytics/analytics.model';
 import { CustomerProfile } from '../agents/profile/profile.model';
 import { CustomerIntelligence } from './customer-intelligence.service';
 import { OFFER_CATALOG, OfferCatalogItem } from './offer-catalog';
+import { CurrencyRateService } from './currency-rate.service';
+import { formatCurrencyAmount, roundCurrencyAmount } from './currency.utils';
 
 export interface CustomPlanComponent {
   name: string;
@@ -24,16 +26,20 @@ export interface CustomPlan {
   exclusiveBadge?: string;
   estimatedSavings?: number;
   provider?: string;
+  currency: 'EUR' | 'INR';
+  currencyRateDate?: string;
 }
 
 @Injectable()
 export class CustomPlanComposerService {
-  compose(
+  constructor(private readonly currencyRateService: CurrencyRateService) {}
+
+  async compose(
     message: string,
     profile: CustomerProfile,
     analytics: CustomerAnalytics,
     intelligence: CustomerIntelligence,
-  ): CustomPlan {
+  ): Promise<CustomPlan> {
     const normalized = message.toLowerCase();
     const provider = this.detectProvider(profile.currentNetwork);
     const components: CustomPlanComponent[] = [];
@@ -58,9 +64,18 @@ export class CustomPlanComposerService {
       description: `${component.description} Available on ${provider}.`,
     }));
 
-    const basePrice = providerComponents.reduce((sum, c) => sum + c.monthlyPrice, 0);
-    const discount = this.resolveDiscount(intelligence, providerComponents.length);
-    const finalPrice = Math.max(basePrice - discount, 0);
+    const currency = this.getDestinationCurrency(destination);
+    const exchangeRate = currency === 'EUR' ? await this.currencyRateService.getInrToEurRate() : null;
+    const conversionRate = exchangeRate?.rate ?? 1;
+    const pricedComponents = providerComponents.map((component) => ({
+      ...component,
+      monthlyPrice: roundCurrencyAmount(component.monthlyPrice * conversionRate),
+    }));
+    const basePrice = pricedComponents.reduce((sum, component) => sum + component.monthlyPrice, 0);
+    const discount = roundCurrencyAmount(
+      this.resolveDiscount(intelligence, providerComponents.length) * conversionRate,
+    );
+    const finalPrice = Math.max(roundCurrencyAmount(basePrice - discount), 0);
 
     const dataGB = baseData.tag === 'unlimited' ? -1 : this.parseDataGB(baseData);
     const callMinutes = voiceTier.tag === 'unlimited-calls' ? -1 : this.parseCallMinutes(voiceTier);
@@ -69,9 +84,9 @@ export class CustomPlanComposerService {
     const planName = this.buildPlanName(intelligence, providerComponents);
     const exclusiveBadge = this.buildBadge(intelligence);
     const discountNote = discount > 0
-      ? `Exclusive offer for ${profile.name}: save ₹${discount.toFixed(0)}/month`
+      ? `Exclusive offer for ${profile.name}: save ${formatCurrencyAmount(discount, currency)}/month`
       : undefined;
-    const estimatedSavings = discount > 0 ? discount * 12 : undefined;
+    const estimatedSavings = discount > 0 ? roundCurrencyAmount(discount * 12) : undefined;
 
     return {
       id: `custom-${Date.now()}`,
@@ -79,9 +94,11 @@ export class CustomPlanComposerService {
       isCustom: true,
       dataGB,
       callMinutes,
+      currency,
+      currencyRateDate: exchangeRate?.date,
       price: finalPrice,
       features,
-      components: providerComponents,
+      components: pricedComponents,
       discountNote,
       exclusiveBadge,
       estimatedSavings,
@@ -195,7 +212,7 @@ export class CustomPlanComposerService {
   private resolveRoamingDestination(normalized: string): string | undefined {
     const destinations = [
       'hawaii', 'sydney', 'austria', 'liverpool', 'manila', 'philippines', 'china', 'asia', 'japan', 'tokyo', 'osaka', 'kenya', 'bhutan', 'usa', 'united states',
-      'uk', 'united kingdom', 'uae', 'dubai', 'thailand', 'maldives', 'france', 'germany', 'spain',
+      'uk', 'united kingdom', 'uae', 'dubai', 'thailand', 'maldives', 'netherlands', 'amsterdam', 'france', 'germany', 'spain',
     ];
     const knownDestination = destinations.find((destination) => normalized.includes(destination));
     if (knownDestination) return knownDestination;
@@ -204,6 +221,15 @@ export class CustomPlanComposerService {
       /\b(?:going\s+to|travell?ing\s+to|visiting|visit|moving\s+to|relocating\s+to|studying\s+in)\s+([a-z]+(?:\s+[a-z]+){0,2}?)(?=\s+for\s+\d+\s+days?\b|\s+(?:and|,|give|show|need|want|what)\b|$)/i,
     );
     return destinationMatch?.[1]?.trim();
+  }
+
+  private getDestinationCurrency(destination?: string): 'EUR' | 'INR' {
+    const euroAreaDestinations = new Set([
+      'amsterdam', 'austria', 'belgium', 'croatia', 'cyprus', 'estonia', 'finland',
+      'france', 'germany', 'greece', 'ireland', 'italy', 'latvia', 'lithuania',
+      'luxembourg', 'malta', 'netherlands', 'portugal', 'slovakia', 'slovenia', 'spain',
+    ]);
+    return destination && euroAreaDestinations.has(destination) ? 'EUR' : 'INR';
   }
 
   private buildRoamingComponent(destination: string, tripDays?: number): CustomPlanComponent {

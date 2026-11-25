@@ -43,6 +43,8 @@ export interface Plan {
   dataGB: number;
   callMinutes: number;
   price: number;
+  currency?: 'EUR' | 'INR' | 'USD';
+  currencyRateDate?: string;
   features: string[];
   recommended: boolean;
   // custom composed plan extras
@@ -75,6 +77,13 @@ export interface EsimStatus {
   deviceId?: string;
   activatedAt?: string;
   qrCodeUrl?: string;
+}
+
+export interface ActivationStatus {
+  status: 'activated' | 'not_activated';
+  paymentPending: boolean;
+  planId?: string;
+  activatedAt?: string;
 }
 
 export type TicketPriority = 'low' | 'medium' | 'high';

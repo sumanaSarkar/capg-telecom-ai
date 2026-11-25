@@ -36,6 +36,19 @@ describe('Auth (e2e)', () => {
       });
   });
 
+  it('uses the issued JWT for protected requests', async () => {
+    const login = await request(app.getHttpServer())
+      .post('/auth/login')
+      .send({ username: 'user1', password: 'password123' })
+      .expect(200);
+    const body = login.body as LoginResponseBody;
+
+    await request(app.getHttpServer())
+      .get('/profile/cust-001')
+      .set('Authorization', `Bearer ${body.accessToken}`)
+      .expect(200);
+  });
+
   it('/auth/login (POST) fails with invalid credentials', () => {
     return request(app.getHttpServer())
       .post('/auth/login')

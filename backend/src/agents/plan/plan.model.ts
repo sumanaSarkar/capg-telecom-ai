@@ -4,6 +4,8 @@ export interface Plan {
   dataGB: number;
   callMinutes: number;
   price: number;
+  currency?: 'EUR' | 'INR' | 'USD';
+  currencyRateDate?: string;
   features: string[];
   recommended: boolean;
 }

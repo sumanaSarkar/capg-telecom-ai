@@ -20,6 +20,7 @@ import { ConsultativeFlowService } from './consultative-flow.service';
 import { DecisionEngineService } from './decision-engine.service';
 import { RecommendationService } from './recommendation.service';
 import { TellyResponseTemplateService } from './telly-response-template.service';
+import { CurrencyRateService } from './currency-rate.service';
 
 @Module({
   imports: [
@@ -38,6 +39,6 @@ import { TellyResponseTemplateService } from './telly-response-template.service'
     SupportModule,
   ],
   controllers: [OrchestratorController],
-  providers: [OrchestratorService, RecommendationService, DecisionEngineService, CustomerIntelligenceService, CustomPlanComposerService, ConsultativeFlowService, TellyResponseTemplateService],
+  providers: [OrchestratorService, RecommendationService, DecisionEngineService, CustomerIntelligenceService, CustomPlanComposerService, ConsultativeFlowService, TellyResponseTemplateService, CurrencyRateService],
 })
 export class OrchestratorModule {}

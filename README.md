@@ -10,6 +10,11 @@ and payment flow end-to-end.
 > All telecom, payment, and billing data is mocked and held in memory. There
 > is no real database or payment gateway. The LLM layer defaults to a
 > deterministic mock provider locally and can use OpenAI when configured.
+> Telly Autopilot is also simulated: it can update mock bill and recharge
+> settings, but it does not authorize or charge real money. There is no
+> background payment scheduler; a mock pending bill is marked paid only when
+> the customer asks Telly to process it, and Autopilot settings reset on
+> backend restart.
 
 ## Architecture
 
@@ -28,7 +33,7 @@ and payment flow end-to-end.
   (`LLM_PROVIDER=mock|openai`). Chat defaults to `gpt-4.1-mini` when OpenAI
   is selected.
 - **Speech module** — optional OpenAI speech-to-text, text-to-speech, and
-  browser Realtime session endpoints. Defaults are `gpt-4o-mini-transcribe`,
+  browser Realtime session endpoints. Defaults are `gpt-4o-transcribe`,
   `gpt-4o-mini-tts`, and `gpt-realtime-mini` respectively.
 - **Agent modules** — one NestJS module per domain: `profile`, `analytics`,
   `plan`, `billing`, `recharge`, `payment`, `roaming`, `support`, `esim`.
@@ -184,13 +189,21 @@ Pass criteria:
 - Ongoing speech is cut off on interruption.
 - Assistant does not restart the old sentence.
 - Assistant continues from updated user intent.
+- A brief hesitation or pause does not trigger a premature reply.
+- A completed user turn produces one assistant response and one audible voice.
+- The assistant's concise reply appears in chat without a "Voice summary" label.
+- Billing responses show viewable bill details and can open a prefilled email draft.
+- "Last two months" returns two bill records with date, amount, and paid status; selecting one expands its details.
+- Netherlands roaming prices use the EUR equivalent from the latest ECB reference rate, consistently in speech and chat.
+- A plan is reported as activated only after payment succeeds; otherwise the status remains not activated.
+- Recommendation responses show activate and decline actions when a plan is available.
 
 ### 3. Sentiment and empathy quality
-
 Test scenarios:
 1. Distress: "I lost my phone and I am panicking."
 2. Frustration: "My bill is too high, this is ridiculous."
 3. Confusion: "I don't understand which plan is right for me."
+4. Say a full answer with natural pauses between phrases and verify the agent waits, understands the whole answer, and responds to its emotional cues without guessing.
 
 Pass criteria:
 - Assistant acknowledges emotion first.
@@ -357,7 +370,7 @@ npm run build
 | `JWT_SECRET`                 | `please-set-a-secure-jwt-secret` | Secret used to sign/verify JWTs               |
 | `LLM_PROVIDER`               | `mock`                        | `mock` or `openai` (provider selection)          |
 | `OPENAI_MODEL`               | `gpt-4.1-mini`                | Conversation and intent model                     |
-| `OPENAI_TRANSCRIPTION_MODEL` | `gpt-4o-mini-transcribe`      | Speech-to-text model                              |
+| `OPENAI_TRANSCRIPTION_MODEL` | `gpt-4o-transcribe`           | Speech-to-text model                              |
 | `OPENAI_TTS_MODEL`           | `gpt-4o-mini-tts`             | Text-to-speech model                              |
 | `OPENAI_REALTIME_MODEL`      | `gpt-realtime-mini`           | Realtime browser voice model                      |
 | `NODE_ENV`                   | `development`                 | Standard Node environment flag                    |

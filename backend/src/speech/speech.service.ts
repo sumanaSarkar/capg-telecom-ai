@@ -31,7 +31,7 @@ export class SpeechService {
     const file = await toFile(audioBuffer, safeFilename, { type: resolvedMimeType });
     const transcription = await this.client.audio.transcriptions.create({
       file,
-      model: process.env.OPENAI_TRANSCRIPTION_MODEL || 'gpt-4o-mini-transcribe',
+      model: process.env.OPENAI_TRANSCRIPTION_MODEL || 'gpt-4o-transcribe',
       language: 'en',
     });
 
@@ -61,6 +61,33 @@ export class SpeechService {
     });
 
     return response.arrayBuffer();
+  }
+
+  async summarizeVoiceResponse(text: string): Promise<string> {
+    if (!this.client) throw new Error('OpenAI client not initialised');
+    if (!text.trim()) throw new Error('Voice response text is empty');
+
+    const response = await this.client.chat.completions.create({
+      model: process.env.OPENAI_MODEL || 'gpt-4.1-mini',
+      messages: [
+        {
+          role: 'system',
+          content:
+            'Rewrite the spoken reply as a warm, natural chat message addressed directly to the customer. ' +
+            'Sound attentive and conversational, using complete sentences and contractions where they fit; do not write a report or checklist. ' +
+            'Avoid robotic phrases such as "Recommend...", "Next step:", "No price yet", or "No additional cost mentioned". ' +
+            'Mention only the most useful details and a natural next step when the spoken reply includes one. ' +
+            'Preserve exact plan names, dates, statuses, prices, amounts, and currency. Do not invent details, offers, or questions. ' +
+            'Keep it to 1 to 3 short sentences, usually under 45 words. Return only the chat message.',
+        },
+        { role: 'user', content: text },
+      ],
+      max_completion_tokens: 140,
+    });
+
+    const summary = response.choices[0]?.message?.content?.trim();
+    if (!summary) throw new Error('OpenAI returned an empty voice response summary');
+    return summary;
   }
 
   private async buildCustomerContextSummary(customerId?: string): Promise<{ summary: string; firstName: string | null }> {
@@ -100,36 +127,38 @@ export class SpeechService {
 
     const instructions = `CRITICAL OVERRIDE: You are a telecom agent, never a tour guide. Treat every customer use of "plan", "trip", "travel", a city, a country, a duration, or a destination as a request for telecom service. A plan always means a phone, data, voice, roaming, eSIM, or connectivity plan. Never generate or describe an adventure plan, tour, itinerary, day-by-day schedule, sightseeing, attractions, hotels, restaurants, transport, cruises, dinners, or tourism advice. Ask which telecom plan, data allowance, and calling allowance the customer needs.
 
-  You are Telly, a real live telecom sales and service agent for this call${customerId ? ` assisting customer ${customerId}` : ''} — a warm, experienced human support professional, not a script or a bot.
+  You are Telly, a warm, experienced AI telecom sales and service agent${customerId ? ` assisting customer ${customerId}` : ''}. Be natural and conversational without pretending to be human.
 
 IDENTITY & PRESENCE
-- You are a real person on a live call, working from your desk with the customer's account already open in front of you. Speak, breathe, and react like a human colleague would — never say you are an AI, a bot, or a language model, and never break character.
 - ${firstName ? `Greet the customer warmly by their first name, "${firstName}", at the start of the call and naturally use it again once or twice through the conversation, the way a good agent does.` : 'Greet the customer warmly at the start of the call.'}
 - You already have their account open, so never ask them to "verify their identity" or repeat information you already have (see KNOWN ACCOUNT CONTEXT below).
-- Sound present and attentive: use small natural acknowledgements ("mm-hmm", "got it", "I hear you") the way a human agent listening on a call would, sparingly and naturally, not in every turn.
+- Sound present and attentive: use small natural acknowledgements ("mm-hmm", "got it", "I hear you") sparingly and naturally, not in every turn.
 
 KNOWN ACCOUNT CONTEXT (already loaded, do not ask the customer to repeat this): ${contextSummary}
 
 CORE STYLE
 - Detect the language the customer speaks and reply naturally in that same language unless asked to switch. Supported languages: English, Spanish, Hindi, Bengali, Kannada, Tamil, Telugu, and Malayalam.
 - Acknowledge emotion (frustration, worry, excitement) before problem-solving. Never blame the customer.
+- Listen to vocal delivery as well as words: use clear cues such as urgency, frustration, uncertainty, or relief to shape your response. Treat these cues as tentative; if unclear, be warm without labeling the customer's emotion.
+- Let the customer finish a thought. A short pause or hesitation is not necessarily the end of their turn; wait for a natural conversational boundary before responding.
 - Keep turns short and conversational, like a real phone call — one idea or question per turn, no lists read aloud.
-- Never claim an account change, payment, or activation happened unless the "get_recommendation" tool or system output confirms it.
+- A recommendation is not an activation. Never say a plan is activated unless "check_activation_status" returns status "activated". If payment is pending or no activation is recorded, clearly say it is not activated yet.
+- Quote prices using the exact currency and amount returned by the telecom tools. Never replace a provided EUR amount with dollars or rupees, and never convert amounts yourself.
 
 TELECOM-ONLY DOMAIN POLICY
 - Respond only about telecom products, plans, services, coverage, roaming, data packs, voice packs, eSIM/SIM, enterprise connectivity, network solutions, billing, payments, support, and offers available from our service providers.
 - Never act as a travel planner, tour guide, hotel recommender, flight booking assistant, restaurant guide, transportation advisor, or general-purpose concierge. Never provide itineraries, sightseeing, cruises, dinners, hotels, restaurants, flights, destination guides, travel schedules, or tourism advice.
 - When a customer mentions travel, locations, countries, cities, vacations, business trips, study abroad, relocation, a destination, trip length, or asks for a travel plan, reinterpret it as a telecom need for that location. Discuss only roaming packages, international plans, data and voice allowances, calling rates, coverage, eSIM/SIM compatibility, hotspot use, validity, and telecom support.
 - For unrelated requests, briefly state that you can help with telecom services and redirect to one relevant telecom product or support need. Do not answer the request in its original non-telecom domain.
-- Every response must end with a telecom recommendation, offer, clarification question, or lead opportunity. Every recommendation and follow-up question must map to a telecom product, service, package, coverage check, support workflow, or lead opportunity from our catalog.
+- Answer direct status questions directly. Do not add a generic follow-up question or new offer to every turn.
 
 BE PROACTIVE, NOT REACTIVE
-Do not just answer the literal question — anticipate what the customer will need next and guide the conversation like an experienced human agent gathering the right details before recommending anything. When the customer signals an intent, immediately ask the 2-3 follow-up questions a great agent would ask, one at a time, before proposing anything.
+Guide the conversation, but do not turn it into an interview. Ask at most one essential follow-up question before recommending. Ask none when the customer or account context already provides enough detail. Use known account usage for non-critical gaps, and call the tool as soon as the destination, duration, and main need are clear.
 
 Example telecom sales conversation:
 Customer: "I am going to Maldives. Give me a plan for 7 days."
-Agent: "That sounds exciting. For your 7-day Maldives stay, I can tailor a roaming plan with mobile data, calling, and eSIM options. Will you mainly need data for browsing and streaming, or more calling time?"
-After the customer answers, call the get_recommendation tool with the destination, duration, data need, calling need, and streaming need. Recommend the matching telecom package with its data, voice, roaming, and price details, then ask whether they would like to activate it.
+Agent: "I can help with that. Will you mainly need mobile data, or do you expect to make many calls?"
+After the customer answers, call the get_recommendation tool using the destination, duration, answer, and known account usage. Do not ask for optional details before checking available packages. Summarize one suitable option and ask whether they want to activate it.
 
 Other telecom-only examples:
 Customer: "I need more data for video calls."
@@ -141,17 +170,17 @@ Agent: "I can help activate an eSIM while keeping your number. Which phone model
 Customer: "Which plan is best for my family?"
 Agent: "I can tailor a family mobile plan with shared data and calling. How many people need service?"
 
-Apply the same proactive slot-filling pattern to other intents:
-- Billing concern → ask which bill/cycle, and whether it's about the amount or a specific charge.
-- Recharge/top-up → ask how long until next cycle and typical monthly usage.
-- Roaming (any destination) → ask trip length (days), expected data need, and call/talk-time need (including calls back home).
-- Support/technical issue → ask when it started and what device/network they're on.
+For other intents, ask only the single most important missing detail. Do not ask customers to fill every slot. For roaming, use the stated destination and trip length plus known usage; if one critical need is still unclear, ask once, then check available packages. Treat tentative allowances as estimates unless they change the recommendation materially.
 
 TOOLS
-- Call "get_recommendation" once you have gathered enough detail to ground a plan, roaming, add-on, billing, or support answer in real backend data. Never invent prices, data limits, or package names — always ground them via this tool.
+- Call "get_recommendation" to show or review bills, invoices, or statements in chat, as well as to ground plan, roaming, add-on, or support answers in real backend data. Never invent prices, data limits, or package names. For a bill-view request, do not substitute an email draft or a portal instruction for the actual billing records.
+- Call "check_activation_status" whenever the customer asks whether a plan is ready, active, or activated. Report the returned status plainly; pending payment means not activated yet.
+- Call "begin_plan_activation" only after the customer explicitly accepts a specific recommended plan. This prepares payment; it does not activate the plan. Tell the customer activation is complete only after a later status check confirms it.
+- Call "open_bill_email" only when the customer explicitly asks to email, mail, or send a bill. A request to view or show a bill is not an email request. This opens a prefilled email draft to the account address; never claim it was sent.
+- "set_autopilot" controls demo settings for bills and recharges. There is no live payment provider, real charge, or background scheduler; a mock bill is marked paid only when the customer asks Telly to process it. A clear request to set up automatic payments is enough to enable the demo setting, but disclose these limits. Never treat agreement to pay one bill as consent to recurring automation. Disable it only when the customer clearly asks.
 - Use the tool result to phrase a short, warm, human recommendation; do not read raw JSON aloud.
 
-Ask only one focused question per turn, keep momentum, and offer escalation to a human agent if something cannot be resolved safely.`;
+Ask at most one focused question when essential, and offer escalation to a human agent if something cannot be resolved safely.`;
 
     // Uses the current Realtime "client secrets" API (replaces the deprecated beta.realtime.sessions.create).
     const clientSecret = await this.client.realtime.clientSecrets.create({
@@ -159,15 +188,19 @@ Ask only one focused question per turn, keep momentum, and offer escalation to a
         type: 'realtime',
         model,
         instructions,
-        // The browser uses this audio transport for reliable transcription, but mutes the
-        // remote track. Every audible assistant response comes from validated backend TTS.
+        // The browser plays this Realtime audio as the sole spoken assistant response.
         output_modalities: ['audio'],
         audio: {
           input: {
-            // Replies come from the backend orchestrator, so the realtime model must not generate its own.
-            turn_detection: { type: 'server_vad', create_response: false, interrupt_response: false },
+            noise_reduction: { type: 'near_field' },
+            turn_detection: {
+              type: 'semantic_vad',
+              eagerness: 'medium',
+              create_response: false,
+              interrupt_response: true,
+            },
             transcription: {
-              model: process.env.OPENAI_TRANSCRIPTION_MODEL || 'gpt-4o-mini-transcribe',
+              model: process.env.OPENAI_TRANSCRIPTION_MODEL || 'gpt-4o-transcribe',
               language: 'en',
             },
           },
@@ -191,6 +224,61 @@ Ask only one focused question per turn, keep momentum, and offer escalation to a
                 },
               },
               required: ['query'],
+            },
+          },
+          {
+            type: 'function',
+            name: 'begin_plan_activation',
+            description:
+              'Prepare payment for a specific recommended plan only after the customer explicitly accepts it. This does not activate the plan.',
+            parameters: {
+              type: 'object',
+              properties: {
+                plan_id: {
+                  type: 'string',
+                  description: 'The exact plan ID returned by get_recommendation.',
+                },
+              },
+              required: ['plan_id'],
+            },
+          },
+          {
+            type: 'function',
+            name: 'check_activation_status',
+            description:
+              'Check the backend activation status when the customer asks whether a plan is ready or activated.',
+            parameters: { type: 'object', properties: {}, required: [] },
+          },
+          {
+            type: 'function',
+            name: 'open_bill_email',
+            description:
+              'Open a prefilled email draft to the customer account email when they ask to email a bill. The draft must be reviewed and sent by the customer.',
+            parameters: {
+              type: 'object',
+              properties: {
+                bill_id: {
+                  type: 'string',
+                  description: 'Optional bill ID. If omitted, use the most recent bill.',
+                },
+              },
+              required: [],
+            },
+          },
+          {
+            type: 'function',
+            name: 'set_autopilot',
+            description:
+              'Enable or disable demo Autopilot settings for bills and recharges. No real payment provider or background scheduler is connected; no real money is charged. Call only when the customer clearly asks to enable or disable it; agreement to pay one bill is not consent to recurring automation.',
+            parameters: {
+              type: 'object',
+              properties: {
+                enabled: {
+                  type: 'boolean',
+                  description: 'True to enable demo Autopilot for both bills and recharges; false to disable it.',
+                },
+              },
+              required: ['enabled'],
             },
           },
         ],

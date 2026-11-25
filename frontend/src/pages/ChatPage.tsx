@@ -9,8 +9,9 @@ import { SuccessCard } from '../components/chat/SuccessCard';
 import { ErrorMessage } from '../components/common/ErrorMessage';
 import { LoadingSpinner } from '../components/common/LoadingSpinner';
 import { useAuth } from '../hooks/useAuth';
-import { unlockVoicePlayback, useChat } from '../hooks/useChat';
+import { useChat } from '../hooks/useChat';
 import { api } from '../services/api';
+import { buildBillEmailUrl } from '../services/billEmail';
 import type { ChatMessage } from '../hooks/useChat';
 import type { AgentCommunicationTrace, OrchestratorResponse } from '../services/types';
 import styles from './ChatPage.module.css';
@@ -38,10 +39,8 @@ const FLOW_NODE_LAYOUT = [
   { x: 62, y: 80 },
 ] as const;
 
-const TOURISM_CONTENT_PATTERN = /\b(tourist attractions?|sightseeing|itinerar(?:y|ies)|day[-\s]?wise|travel schedules?|hotel(?:s| suggestions?)?|restaurant(?:s| suggestions?)?|cruise(?:s)?|dinner(?:s)?|vacation (?:plan|guide)|destination guide)\b/i;
-
-function containsTourismContent(text: string): boolean {
-  return TOURISM_CONTENT_PATTERN.test(text);
+function removeLegacyVoiceLabel(text: string): string {
+  return text.replace(/^Voice summary:\s*/i, '');
 }
 
 interface FlowDiagramNode {
@@ -295,6 +294,7 @@ export function ChatPage() {
   const [error, setError] = useState<string | null>(null);
   const [listening, setListening] = useState(false);
   const [voiceMode, setVoiceMode] = useState(false);
+  const [realtimeStarting, setRealtimeStarting] = useState(false);
   const [backendHistory, setBackendHistory] = useState<AgentCommunicationTrace[]>([]);
   const [localHistory, setLocalHistory] = useState<AgentCommunicationTrace[]>([]);
   const [historyLoading, setHistoryLoading] = useState(true);
@@ -305,16 +305,18 @@ export function ChatPage() {
   const [autopilotEnabled, setAutopilotEnabled] = useState(false);
   const [autopilotLoading, setAutopilotLoading] = useState(false);
   const threadRef = useRef<HTMLDivElement>(null);
-  const realtimeSessionRef = useRef<Record<string, unknown> | null>(null);
   const realtimePeerRef = useRef<RTCPeerConnection | null>(null);
   const realtimeChannelRef = useRef<RTCDataChannel | null>(null);
   const realtimeStreamRef = useRef<MediaStream | null>(null);
   const realtimeAudioRef = useRef<HTMLAudioElement | null>(null);
   const realtimePendingCallsRef = useRef<Map<string, string>>(new Map());
-  const latestRealtimeTranscriptRef = useRef('');
+  const pendingVoiceResponseRef = useRef<OrchestratorResponse | null>(null);
   const handledTranscriptItemsRef = useRef<Set<string>>(new Set());
-  const tourismReplacementPendingRef = useRef(false);
-  const suppressRealtimeOutputRef = useRef(false);
+  const handledAssistantItemsRef = useRef<Set<string>>(new Set());
+  const realtimeStartingRef = useRef(false);
+  const realtimeSessionGenerationRef = useRef(0);
+  const pendingTranscriptSegmentsRef = useRef<string[]>([]);
+  const transcriptFlushTimeoutRef = useRef<number | null>(null);
 
   useEffect(() => {
     threadRef.current?.scrollTo({ top: threadRef.current.scrollHeight, behavior: 'smooth' });
@@ -550,7 +552,7 @@ export function ChatPage() {
       {
         id: crypto.randomUUID(),
         role: 'assistant',
-        text: 'No problem! Let me know if you would like to explore other plans or need anything else.',
+        text: 'Plan not activated. You can choose another plan or activate this one later.',
       },
     ]);
   };
@@ -582,20 +584,18 @@ export function ChatPage() {
 
   const handleToggleAutopilot = async () => {
     setAutopilotLoading(true);
+    setError(null);
     try {
-      if (autopilotEnabled) {
-        await api.disableAutopilot(customerId);
-        setAutopilotEnabled(false);
-        const res = await api.ask('Telly Autopilot disabled', customerId, 'autopilot_disable');
-        appendAssistantMessage(res);
-      } else {
-        await api.enableAutopilot(customerId);
-        setAutopilotEnabled(true);
-        const res = await api.ask('Telly Autopilot enabled', customerId, 'autopilot_enable');
-        appendAssistantMessage(res);
-      }
+      const enabled = !autopilotEnabled;
+      const response = await api.ask(
+        enabled ? 'Enable demo Autopilot for bills and recharges.' : 'Disable demo Autopilot.',
+        customerId,
+        enabled ? 'autopilot_enable' : 'autopilot_disable',
+      );
+      setAutopilotEnabled(response.autopilot?.enabled === true);
+      appendAssistantMessage(response);
     } catch {
-      // silently ignore toggle errors
+      setError('Unable to update demo Autopilot right now. Please try again.');
     } finally {
       setAutopilotLoading(false);
     }
@@ -614,6 +614,11 @@ export function ChatPage() {
   };
 
   const stopRealtimeVoice = () => {
+    realtimeSessionGenerationRef.current += 1;
+    if (transcriptFlushTimeoutRef.current !== null) {
+      window.clearTimeout(transcriptFlushTimeoutRef.current);
+      transcriptFlushTimeoutRef.current = null;
+    }
     realtimeChannelRef.current?.close();
     realtimePeerRef.current?.close();
     realtimeStreamRef.current?.getTracks().forEach((track) => track.stop());
@@ -624,24 +629,108 @@ export function ChatPage() {
     realtimePeerRef.current = null;
     realtimeStreamRef.current = null;
     realtimePendingCallsRef.current.clear();
-    latestRealtimeTranscriptRef.current = '';
-    tourismReplacementPendingRef.current = false;
-    suppressRealtimeOutputRef.current = false;
+    pendingVoiceResponseRef.current = null;
+    handledTranscriptItemsRef.current.clear();
+    handledAssistantItemsRef.current.clear();
+    pendingTranscriptSegmentsRef.current = [];
     setVoiceMode(false);
     setListening(false);
   };
 
-  const executeRealtimeTool = async (name: string, args: Record<string, unknown>): Promise<unknown> => {
+  const executeRealtimeTool = async (
+    name: string,
+    args: Record<string, unknown>,
+    sessionGeneration: number,
+  ): Promise<unknown> => {
     if (name === 'get_recommendation') {
       const query = typeof args.query === 'string' ? args.query : '';
       const response = await api.ask(query, customerId, 'ask');
+      if (sessionGeneration === realtimeSessionGenerationRef.current) {
+        pendingVoiceResponseRef.current = response;
+      }
       return {
+        stage: response.stage,
         finalMessage: response.finalMessage,
         recommendation: response.recommendation,
         availablePlans: response.availablePlans,
         rechargeOptions: response.rechargeOptions,
         roamingPackages: response.roamingPackages,
         billingHistory: response.billingHistory,
+        paymentUrl: response.paymentUrl,
+        paymentId: response.paymentId,
+        context: response.context,
+      };
+    }
+    if (name === 'begin_plan_activation') {
+      const planId = typeof args.plan_id === 'string' ? args.plan_id : '';
+      if (!planId) return { error: 'A plan ID is required before preparing activation.' };
+
+      const response = await api.ask(
+        'Yes, please proceed with this plan.',
+        customerId,
+        'confirm',
+        planId,
+      );
+      if (sessionGeneration === realtimeSessionGenerationRef.current) {
+        pendingVoiceResponseRef.current = response;
+      }
+      return {
+        stage: response.stage,
+        finalMessage: response.finalMessage,
+        paymentUrl: response.paymentUrl,
+        paymentId: response.paymentId,
+        context: response.context,
+      };
+    }
+    if (name === 'check_activation_status') {
+      const status = await api.getActivationStatus(customerId);
+      return {
+        ...status,
+        message:
+          status.status === 'activated'
+            ? 'The plan is activated.'
+            : status.paymentPending
+              ? 'The plan is not activated yet; payment is pending.'
+              : 'No plan activation has been completed.',
+      };
+    }
+    if (name === 'open_bill_email') {
+      const billId = typeof args.bill_id === 'string' ? args.bill_id : '';
+      const records = await api.getBilling(customerId);
+      const record = billId
+        ? records.find((item) => item.id === billId)
+        : [...records].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())[0];
+      if (!record) return { error: 'No matching bill was found to email.' };
+
+      const profile = await api.getProfile(customerId);
+      if (!profile.email.trim()) return { error: 'There is no email address on the customer profile.' };
+      window.location.href = buildBillEmailUrl(record, profile.email);
+      return {
+        status: 'draft_opened',
+        billId: record.id,
+        message: 'An email draft was opened. The customer must review and send it.',
+      };
+    }
+    if (name === 'set_autopilot') {
+      if (typeof args.enabled !== 'boolean') {
+        return { error: 'Choose whether to enable or disable demo Autopilot.' };
+      }
+
+      const enabled = args.enabled;
+      const response = await api.ask(
+        enabled ? 'Enable demo Autopilot for bills and recharges.' : 'Disable demo Autopilot.',
+        customerId,
+        enabled ? 'autopilot_enable' : 'autopilot_disable',
+      );
+      if (sessionGeneration === realtimeSessionGenerationRef.current) {
+        pendingVoiceResponseRef.current = response;
+        setAutopilotEnabled(response.autopilot?.enabled === true);
+      }
+      return {
+        enabled: response.autopilot?.enabled === true,
+        simulated: true,
+        realCharges: false,
+        message: response.finalMessage,
       };
     }
     return { error: `Unknown tool: ${name}` };
@@ -669,14 +758,17 @@ export function ChatPage() {
       return;
     }
 
-    unlockVoicePlayback();
+    if (realtimeStartingRef.current) return;
+    realtimeStartingRef.current = true;
+    setRealtimeStarting(true);
+    const sessionGeneration = ++realtimeSessionGenerationRef.current;
     let realtimeStage = 'creating a realtime session';
 
     try {
       setInput('');
       setError(null);
       const session = await api.createRealtimeSession(customerId);
-      realtimeSessionRef.current = session;
+      if (sessionGeneration !== realtimeSessionGenerationRef.current) return;
       // Current Realtime "client secrets" API returns { value, session, expires_at } at the top level.
       const clientSecret = typeof session.value === 'string' ? session.value : '';
       if (!clientSecret) {
@@ -688,18 +780,54 @@ export function ChatPage() {
       }
 
       const peer = new RTCPeerConnection();
-      const mutedAudio = new Audio();
-      mutedAudio.autoplay = true;
-      mutedAudio.muted = true;
+      realtimePeerRef.current = peer;
+      const remoteAudio = new Audio();
+      remoteAudio.autoplay = true;
+      remoteAudio.setAttribute('playsinline', '');
+      realtimeAudioRef.current = remoteAudio;
       peer.ontrack = (event) => {
-        mutedAudio.srcObject = event.streams[0];
-        void mutedAudio.play().catch(() => {});
+        remoteAudio.srcObject = event.streams[0];
+        void remoteAudio.play().catch(() => {
+          if (sessionGeneration === realtimeSessionGenerationRef.current) {
+            setError('Live Agent: browser audio playback was blocked. Allow audio playback and try again.');
+          }
+        });
       };
 
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      if (sessionGeneration !== realtimeSessionGenerationRef.current) {
+        stream.getTracks().forEach((track) => track.stop());
+        peer.close();
+        return;
+      }
       realtimeStreamRef.current = stream;
       stream.getTracks().forEach((track) => peer.addTrack(track, stream));
       const channel = peer.createDataChannel('oai-events');
+      realtimeChannelRef.current = channel;
+
+      const scheduleResponse = () => {
+        if (transcriptFlushTimeoutRef.current !== null) {
+          window.clearTimeout(transcriptFlushTimeoutRef.current);
+        }
+
+        transcriptFlushTimeoutRef.current = window.setTimeout(() => {
+          transcriptFlushTimeoutRef.current = null;
+          if (sessionGeneration !== realtimeSessionGenerationRef.current) return;
+
+          const transcript = pendingTranscriptSegmentsRef.current
+            .splice(0)
+            .join(' ')
+            .replace(/\s+/g, ' ')
+            .trim();
+          if (!transcript) return;
+
+          setMessages((prev) => [...prev, { id: crypto.randomUUID(), role: 'user', text: transcript }]);
+          if (channel.readyState === 'open') {
+            channel.send(JSON.stringify({ type: 'response.create' }));
+          }
+        }, 700);
+      };
+
       channel.onmessage = (event) => {
         const realtimeEvent = JSON.parse(event.data) as {
           type?: string;
@@ -710,49 +838,59 @@ export function ChatPage() {
           item_id?: string;
           item?: { type?: string; call_id?: string; name?: string };
         };
+        if (realtimeEvent.type === 'input_audio_buffer.speech_started') {
+          if (transcriptFlushTimeoutRef.current !== null) {
+            window.clearTimeout(transcriptFlushTimeoutRef.current);
+            transcriptFlushTimeoutRef.current = null;
+          }
+          return;
+        }
         if (realtimeEvent.type === 'conversation.item.input_audio_transcription.completed' && realtimeEvent.transcript?.trim()) {
           if (realtimeEvent.item_id) {
             if (handledTranscriptItemsRef.current.has(realtimeEvent.item_id)) return;
             handledTranscriptItemsRef.current.add(realtimeEvent.item_id);
           }
-          const transcript = realtimeEvent.transcript.trim();
-          latestRealtimeTranscriptRef.current = transcript;
-          suppressRealtimeOutputRef.current = false;
-          setMessages((prev) => [...prev, { id: crypto.randomUUID(), role: 'user', text: transcript }]);
-
-          suppressRealtimeOutputRef.current = true;
-          if (tourismReplacementPendingRef.current) return;
-
-          tourismReplacementPendingRef.current = true;
-          void api.ask(transcript, customerId, 'ask')
-            .then((response) => appendAssistantMessage(response, true, transcript))
-            .catch(() => setError('Live Agent: unable to generate a telecom-focused response. Please try again.'))
-            .finally(() => {
-              tourismReplacementPendingRef.current = false;
-            });
+          pendingTranscriptSegmentsRef.current.push(realtimeEvent.transcript.trim());
+          scheduleResponse();
         }
-        if (realtimeEvent.type === 'response.audio_transcript.done' && realtimeEvent.transcript?.trim()) {
-          const responseTranscript = realtimeEvent.transcript.trim();
-          if (suppressRealtimeOutputRef.current) return;
-          if (containsTourismContent(responseTranscript)) {
-            if (tourismReplacementPendingRef.current || !latestRealtimeTranscriptRef.current) return;
-
-            tourismReplacementPendingRef.current = true;
-            realtimeChannelRef.current?.send(JSON.stringify({ type: 'response.cancel' }));
-            if (realtimeAudioRef.current) {
-              realtimeAudioRef.current.srcObject = null;
-            }
-
-            void api.ask(latestRealtimeTranscriptRef.current, customerId, 'ask')
-              .then((response) => appendAssistantMessage(response, true, latestRealtimeTranscriptRef.current))
-              .catch(() => setError('Live Agent: unable to generate a telecom-focused response. Please try again.'))
-              .finally(() => {
-                tourismReplacementPendingRef.current = false;
-              });
-            return;
+        if (realtimeEvent.type === 'response.output_audio_transcript.done' && realtimeEvent.transcript?.trim()) {
+          if (realtimeEvent.item_id) {
+            if (handledAssistantItemsRef.current.has(realtimeEvent.item_id)) return;
+            handledAssistantItemsRef.current.add(realtimeEvent.item_id);
           }
+          const responseTranscript = realtimeEvent.transcript.trim();
+          const voiceResponse = pendingVoiceResponseRef.current;
+          pendingVoiceResponseRef.current = null;
+          const messageId = crypto.randomUUID();
 
-          setMessages((prev) => [...prev, { id: crypto.randomUUID(), role: 'assistant', text: responseTranscript }]);
+          void api.summarizeVoiceResponse(responseTranscript)
+            .then(({ summary }) => {
+              if (sessionGeneration !== realtimeSessionGenerationRef.current) return;
+              setMessages((prev) => [
+                ...prev,
+                voiceResponse
+                  ? {
+                      id: messageId,
+                      role: 'assistant',
+                      response: { ...voiceResponse, finalMessage: summary },
+                    }
+                  : { id: messageId, role: 'assistant', text: summary },
+              ]);
+            })
+            .catch(() => {
+              if (sessionGeneration !== realtimeSessionGenerationRef.current) return;
+              setError('Could not summarize the voice response; showing its spoken text instead.');
+              setMessages((prev) => [
+                ...prev,
+                voiceResponse
+                  ? {
+                      id: messageId,
+                      role: 'assistant',
+                      response: { ...voiceResponse, finalMessage: responseTranscript },
+                    }
+                  : { id: messageId, role: 'assistant', text: responseTranscript },
+              ]);
+            });
         }
         if (realtimeEvent.type === 'response.output_item.added' && realtimeEvent.item?.type === 'function_call') {
           const { call_id, name } = realtimeEvent.item;
@@ -771,7 +909,7 @@ export function ChatPage() {
           } catch {
             parsedArgs = {};
           }
-          void executeRealtimeTool(name, parsedArgs)
+          void executeRealtimeTool(name, parsedArgs, sessionGeneration)
             .then((result) => sendRealtimeToolResult(callId, result))
             .catch((err) => sendRealtimeToolResult(callId, { error: err instanceof Error ? err.message : 'Tool call failed.' }));
         }
@@ -804,17 +942,22 @@ export function ChatPage() {
       }
 
       const answerSdp = await api.connectRealtime(peer.localDescription.sdp, clientSecret);
+      if (sessionGeneration !== realtimeSessionGenerationRef.current) {
+        peer.close();
+        stream.getTracks().forEach((track) => track.stop());
+        return;
+      }
       await peer.setRemoteDescription({ type: 'answer', sdp: answerSdp });
-      realtimePeerRef.current = peer;
-      realtimeChannelRef.current = channel;
-      // Realtime audio is only a muted transport for reliable transcription. Only the
-      // validated backend telecom response is spoken through the TTS path.
-      realtimeAudioRef.current = mutedAudio;
       setVoiceMode(true);
       setListening(true);
     } catch (err) {
-      stopRealtimeVoice();
-      setError(err instanceof Error ? `Live Agent: ${realtimeStage}. ${err.message}` : `Live Agent: ${realtimeStage}. Please try again.`);
+      if (sessionGeneration === realtimeSessionGenerationRef.current) {
+        stopRealtimeVoice();
+        setError(err instanceof Error ? `Live Agent: ${realtimeStage}. ${err.message}` : `Live Agent: ${realtimeStage}. Please try again.`);
+      }
+    } finally {
+      realtimeStartingRef.current = false;
+      setRealtimeStarting(false);
     }
   };
 
@@ -875,10 +1018,12 @@ export function ChatPage() {
                   type="button"
                   onClick={handleToggleAutopilot}
                   disabled={autopilotLoading}
-                  title={autopilotEnabled ? 'Telly Autopilot ON — click to take back control' : 'Enable Telly Autopilot'}
+                  title={autopilotEnabled
+                    ? 'Demo Autopilot ON. It only updates mock bills when requested; no scheduled or real charges. Click to turn it off.'
+                    : 'Enable demo Autopilot settings for bills and recharges; no scheduled or real charges.'}
                 >
                   {autopilotEnabled ? <Zap size={15} /> : <ZapOff size={15} />}
-                  {autopilotEnabled ? 'Autopilot ON' : 'Autopilot OFF'}
+                  {autopilotEnabled ? 'Demo Autopilot ON' : 'Demo Autopilot OFF'}
                 </button>
                 <button className={styles.newChatButton} type="button" onClick={handleStartNewChat}>
                   <Sparkles size={16} />
@@ -888,9 +1033,11 @@ export function ChatPage() {
                   className={styles.newChatButton}
                   type="button"
                   onClick={handleStartRealtimeVoice}
+                  disabled={realtimeStarting}
+                  title={voiceMode ? 'Stop the live voice conversation' : 'Start a live voice conversation'}
                 >
-                  <Mic size={16} />
-                  Live Agent
+                  {voiceMode ? <MicOff size={16} /> : <Mic size={16} />}
+                  {realtimeStarting ? 'Connecting...' : voiceMode ? 'Stop Live Agent' : 'Live Agent'}
                 </button>
               </div>
             </div>
@@ -910,7 +1057,7 @@ export function ChatPage() {
                     message.role === 'user' ? styles.bubbleUser : styles.bubbleAssistant
                   }`}
                 >
-                  {message.text}
+                  {message.role === 'assistant' ? removeLegacyVoiceLabel(message.text) : message.text}
                 </div>
               )}
 
@@ -928,7 +1075,7 @@ export function ChatPage() {
                     }
                     style={{ marginBottom: '0.75rem' }}
                   >
-                    {message.response.finalMessage}
+                    {removeLegacyVoiceLabel(message.response.finalMessage)}
                   </div>
 
                   {message.response.stage === 'recommendation' &&
@@ -967,6 +1114,9 @@ export function ChatPage() {
                       paymentUrl={message.response.paymentUrl}
                       amount={
                         (message.response.context?.plan as { price?: number } | undefined)?.price
+                      }
+                      currency={
+                        (message.response.context?.plan as { currency?: 'EUR' | 'INR' | 'USD' } | undefined)?.currency
                       }
                       onComplete={() => {
                         const plan = message.response?.context?.plan as { id: string } | undefined;
@@ -1084,16 +1234,20 @@ export function ChatPage() {
               disabled={loading}
             />
             <span className={styles.voiceStatus}>
-              {listening ? 'Live conversation active...' : 'Tap the mic for live voice'}
+              {realtimeStarting
+                ? 'Connecting to the live agent...'
+                : listening
+                  ? 'Live conversation active...'
+                  : 'Tap the mic for live voice'}
             </span>
           </div>
           <button
             className={`${styles.voiceButton} ${listening ? styles.voiceButtonActive : ''}`}
             type="button"
             onClick={toggleVoiceInput}
-            disabled={loading || Boolean(input.trim())}
-            aria-label={listening ? 'Stop voice input' : 'Start voice input'}
-            title={listening ? 'Stop voice input' : 'Start voice input'}
+            disabled={loading || realtimeStarting || Boolean(input.trim())}
+            aria-label={realtimeStarting ? 'Connecting to live voice' : listening ? 'Stop voice input' : 'Start voice input'}
+            title={realtimeStarting ? 'Connecting to live voice' : listening ? 'Stop voice input' : 'Start voice input'}
           >
             {listening ? <MicOff size={18} /> : <Mic size={18} />}
           </button>

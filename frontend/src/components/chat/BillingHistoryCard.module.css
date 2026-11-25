@@ -67,8 +67,151 @@
   color: #111827;
 }
 
+.viewButton,
+.emailButton {
+  border: 0;
+  border-radius: 7px;
+  padding: 0.45rem 0.7rem;
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.viewButton {
+  color: #075985;
+  background: #e0f2fe;
+}
+
+.emailButton {
+  color: #fff;
+  background: #0284c7;
+}
+
+.invoiceActions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.6rem;
+  margin-top: 1rem;
+}
+
+.printButton {
+  border: 1px solid #cbd5e1;
+  border-radius: 7px;
+  padding: 0.45rem 0.7rem;
+  color: #334155;
+  background: #fff;
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.emailButton:disabled {
+  opacity: 0.65;
+  cursor: wait;
+}
+
+.invoiceCell {
+  background: #f8fafc;
+}
+
+.invoice {
+  max-width: 38rem;
+  margin: 0.5rem auto;
+  padding: 1.1rem;
+  border: 1px solid #dbe3ec;
+  border-radius: 10px;
+  background: #fff;
+}
+
+.invoiceHeader,
+.invoiceTotal {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.invoiceHeader {
+  padding-bottom: 0.8rem;
+  border-bottom: 1px solid #e5e7eb;
+}
+
+.invoiceHeader h3 {
+  margin: 0 0 0.2rem;
+  color: #111827;
+  font-size: 1rem;
+}
+
+.invoiceHeader div > span,
+.invoiceDetails span {
+  color: #64748b;
+  font-size: 0.8rem;
+}
+
+.invoiceDetails {
+  display: grid;
+  gap: 0.8rem;
+  padding: 0.9rem 0;
+}
+
+.invoiceDetails div {
+  display: grid;
+  gap: 0.2rem;
+}
+
+.invoiceDetails strong {
+  color: #1f2937;
+  font-size: 0.9rem;
+}
+
+.invoiceTotal {
+  padding-top: 0.8rem;
+  border-top: 1px solid #e5e7eb;
+  color: #111827;
+}
+
+.emailMessage {
+  margin: 0;
+  padding: 0.75rem 1rem;
+  color: #334155;
+  font-size: 0.85rem;
+}
+
 .empty {
   padding: 1.25rem;
   color: #6b7280;
   text-align: center;
+}
+
+@media (max-width: 640px) {
+  .card {
+    overflow-x: auto;
+  }
+
+  .table {
+    min-width: 540px;
+  }
+}
+
+@media print {
+  :global(body *) {
+    visibility: hidden !important;
+  }
+
+  .invoice,
+  .invoice * {
+    visibility: visible !important;
+  }
+
+  .invoice {
+    position: fixed;
+    inset: 0;
+    max-width: none;
+    border: 0;
+    box-shadow: none;
+  }
+
+  .invoiceActions {
+    display: none;
+  }
 }

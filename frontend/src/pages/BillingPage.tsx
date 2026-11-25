@@ -1,15 +1,10 @@
 import { ErrorMessage } from '../components/common/ErrorMessage';
 import { LoadingSpinner } from '../components/common/LoadingSpinner';
+import { BillingHistoryCard } from '../components/chat/BillingHistoryCard';
 import { useAuth } from '../hooks/useAuth';
 import { useApi } from '../hooks/useApi';
 import { api } from '../services/api';
 import styles from './Page.module.css';
-
-function statusBadgeClass(status: string) {
-  if (status === 'paid') return styles.badgeGreen;
-  if (status === 'pending') return styles.badgeYellow;
-  return styles.badgeRed;
-}
 
 export function BillingPage() {
   const { user } = useAuth();
@@ -25,24 +20,7 @@ export function BillingPage() {
       {error && <ErrorMessage message={error} />}
 
       {!loading && !error && records && records.length > 0 && (
-        <div className={styles.card}>
-          <div className={styles.list}>
-            {records.map((record) => (
-              <div className={styles.listRow} key={record.id}>
-                <div>
-                  <div style={{ fontWeight: 600, color: '#0f172a' }}>{record.description}</div>
-                  <div style={{ fontSize: '0.8rem', color: '#94a3b8' }}>
-                    {new Date(record.date).toLocaleDateString()}
-                  </div>
-                </div>
-                <div style={{ fontWeight: 700 }}>${record.amount.toFixed(2)}</div>
-                <span className={`${styles.badge} ${statusBadgeClass(record.status)}`}>
-                  {record.status}
-                </span>
-              </div>
-            ))}
-          </div>
-        </div>
+        <BillingHistoryCard records={records} />
       )}
 
       {!loading && !error && records && records.length === 0 && (

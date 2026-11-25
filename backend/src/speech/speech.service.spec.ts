@@ -46,4 +46,30 @@ describe('SpeechService', () => {
       }),
     );
   });
+
+  it('requests a warm conversational chat rewrite that preserves key details', async () => {
+    const service = new SpeechService(new ProfileService(), new AnalyticsService());
+    const createMock = jest.fn().mockResolvedValue({
+      choices: [{ message: { content: 'I can help find a plan that fits.' } }],
+    });
+    Object.defineProperty(service, 'client', {
+      value: { chat: { completions: { create: createMock } } },
+    });
+
+    await expect(service.summarizeVoiceResponse('Recommend a plan for Netherlands.'))
+      .resolves.toBe('I can help find a plan that fits.');
+
+    expect(createMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        messages: expect.arrayContaining([
+          expect.objectContaining({
+            role: 'system',
+            content: expect.stringMatching(
+              /warm, natural chat message[\s\S]*Preserve exact plan names, dates, statuses, prices, amounts, and currency\./,
+            ),
+          }),
+        ]),
+      }),
+    );
+  });
 });

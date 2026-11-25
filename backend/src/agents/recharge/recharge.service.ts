@@ -7,6 +7,13 @@ export interface RechargeResult {
   activatedAt: string;
 }
 
+export interface ActivationStatus {
+  status: 'activated' | 'not_activated';
+  paymentPending: boolean;
+  planId?: string;
+  activatedAt?: string;
+}
+
 const RECHARGE_OPTIONS_BY_CUSTOMER: Record<string, Array<{ planId: string; label: string; price: number }>> = {
   'cust-001': [
     { planId: 'plan-001', label: 'Basic 5GB top-up', price: 10.99 },
@@ -24,9 +31,30 @@ const RECHARGE_OPTIONS_BY_CUSTOMER: Record<string, Array<{ planId: string; label
 
 @Injectable()
 export class RechargeService {
+  private readonly activationByCustomer = new Map<
+    string,
+    { status: 'pending' | 'activated'; planId: string; activatedAt?: string }
+  >();
+
+  markPendingActivation(customerId: string, planId: string): void {
+    this.activationByCustomer.set(customerId, { status: 'pending', planId });
+  }
+
+  getActivationStatus(customerId: string): ActivationStatus {
+    const activation = this.activationByCustomer.get(customerId);
+    return {
+      status: activation?.status === 'activated' ? 'activated' : 'not_activated',
+      paymentPending: activation?.status === 'pending',
+      planId: activation?.planId,
+      activatedAt: activation?.activatedAt,
+    };
+  }
+
   applyRecharge(customerId: string, planId: string): RechargeResult {
     const options = RECHARGE_OPTIONS_BY_CUSTOMER[customerId] ?? RECHARGE_OPTIONS_BY_CUSTOMER['cust-001'];
     const match = options.find((option) => option.planId === planId);
+    const activatedAt = new Date().toISOString();
+    this.activationByCustomer.set(customerId, { status: 'activated', planId, activatedAt });
 
     return {
       success: true,
@@ -34,7 +62,7 @@ export class RechargeService {
         ? `${match.label} applied for ${customerId}`
         : `Recharge applied for customer ${customerId}`,
       planId,
-      activatedAt: new Date().toISOString(),
+      activatedAt,
     };
   }
 }

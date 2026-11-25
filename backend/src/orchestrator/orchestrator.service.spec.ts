@@ -1,4 +1,5 @@
 import { AnalyticsService } from '../agents/analytics/analytics.service';
+import { AutopilotService } from '../agents/autopilot/autopilot.service';
 import { BillingService } from '../agents/billing/billing.service';
 import { PaymentService } from '../agents/payment/payment.service';
 import { PlanService } from '../agents/plan/plan.service';
@@ -10,6 +11,7 @@ import { ILlmProvider } from '../llm/llm-provider.interface';
 import { ConsultativeFlowService } from './consultative-flow.service';
 import { CustomerIntelligenceService } from './customer-intelligence.service';
 import { CustomPlanComposerService } from './custom-plan-composer.service';
+import { CurrencyRateService } from './currency-rate.service';
 import { DecisionEngineService } from './decision-engine.service';
 import { OrchestratorService } from './orchestrator.service';
 import { RecommendationService } from './recommendation.service';
@@ -26,6 +28,16 @@ describe('OrchestratorService', () => {
   let rechargeService: RechargeService;
   let roamingService: RoamingService;
   let billingService: BillingService;
+  let autopilotService: AutopilotService;
+
+  const createCustomPlanComposer = () => {
+    const currencyRateService = new CurrencyRateService();
+    jest.spyOn(currencyRateService, 'getInrToEurRate').mockResolvedValue({
+      rate: 0.01,
+      date: '2026-11-25',
+    });
+    return new CustomPlanComposerService(currencyRateService);
+  };
 
   beforeEach(() => {
     detectIntentMock = jest.fn().mockResolvedValue({
@@ -67,6 +79,7 @@ describe('OrchestratorService', () => {
     rechargeService = new RechargeService();
     roamingService = new RoamingService();
     billingService = new BillingService();
+    autopilotService = new AutopilotService();
 
     orchestrator = new OrchestratorService(
       llmProvider,
@@ -80,10 +93,49 @@ describe('OrchestratorService', () => {
       new RecommendationService(),
       new DecisionEngineService(),
       new CustomerIntelligenceService(),
-      new CustomPlanComposerService(),
-      undefined as never, // AutopilotService — not needed for these unit tests
+      createCustomPlanComposer(),
+      autopilotService,
       new TellyResponseTemplateService(),
     );
+  });
+
+  it('enables demo Autopilot for both bills and recharges on an explicit setup request', async () => {
+    const result = await orchestrator.ask({
+      message: 'Please do that automatic payment setup',
+      customerId: 'cust-001',
+    });
+
+    expect(autopilotService.getSettings('cust-001')).toMatchObject({
+      enabled: true,
+      autoPayBills: true,
+      autoRecharge: true,
+    });
+    expect(result.autopilot).toMatchObject({ enabled: true, action: 'enabled' });
+    expect(result.finalMessage).toMatch(/demo autopilot is on/i);
+    expect(result.finalMessage).toMatch(/does not charge real money/i);
+  });
+
+  it('does not enable Autopilot when the customer only asks to pay one bill', async () => {
+    const result = await orchestrator.ask({
+      message: 'Yes, please proceed with paying the bill',
+      customerId: 'cust-001',
+    });
+
+    expect(autopilotService.isEnabled('cust-001')).toBe(false);
+    expect(result.stage).toBe('bill-payment');
+  });
+
+  it('marks the pending bill paid in the demo when Autopilot processes it', async () => {
+    autopilotService.enable('cust-001');
+
+    const result = await orchestrator.ask({
+      message: 'Pay my pending bill',
+      customerId: 'cust-001',
+    });
+
+    expect(result.stage).toBe('complete');
+    expect(result.finalMessage).toMatch(/no real payment was taken/i);
+    expect(result.billingHistory?.find((record) => record.id === 'bill-006')?.status).toBe('paid');
   });
 
   it('detects intent and fans out to profile/analytics/plan agents in parallel for a plan request', async () => {
@@ -149,7 +201,7 @@ describe('OrchestratorService', () => {
     const flowOrchestrator = new OrchestratorService(
       llmProvider, profileService, analyticsService, planService, paymentService, rechargeService,
       roamingService, billingService, new RecommendationService(), new DecisionEngineService(),
-      new CustomerIntelligenceService(), new CustomPlanComposerService(), undefined as never,
+      new CustomerIntelligenceService(), createCustomPlanComposer(), undefined as never,
       new TellyResponseTemplateService(),
       undefined, undefined, undefined, undefined, undefined, undefined,
       new ConsultativeFlowService(), supportService,
@@ -177,7 +229,7 @@ describe('OrchestratorService', () => {
     const flowOrchestrator = new OrchestratorService(
       llmProvider, profileService, analyticsService, planService, paymentService, rechargeService,
       roamingService, billingService, new RecommendationService(), new DecisionEngineService(),
-      new CustomerIntelligenceService(), new CustomPlanComposerService(), undefined as never,
+      new CustomerIntelligenceService(), createCustomPlanComposer(), undefined as never,
       new TellyResponseTemplateService(),
       undefined, undefined, undefined, undefined, undefined, undefined,
       new ConsultativeFlowService(), supportService,
@@ -543,6 +595,20 @@ describe('OrchestratorService', () => {
     expect(result.finalMessage).toMatch(outputPattern);
   });
 
+  it('converts Netherlands roaming recommendations to EUR using the ECB reference rate', async () => {
+    const result = await orchestrator.ask({
+      message: 'I am visiting the Netherlands for 21 days and need roaming data and calls',
+      customerId: 'cust-001',
+    });
+
+    const plan = result.recommendation?.plan;
+    expect(plan?.currency).toBe('EUR');
+    expect(plan?.currencyRateDate).toBe('2026-11-25');
+    expect(result.finalMessage).toContain('€');
+    expect(result.finalMessage).not.toContain('₹');
+    expect(result.finalMessage).not.toContain('$');
+  });
+
   it('keeps actionable telecom follow-ups out of generic chat fallback', async () => {
     await orchestrator.ask({
       message: 'pasta recipe',
@@ -619,6 +685,28 @@ describe('OrchestratorService', () => {
     expect(result.stage).toBe('billing');
     expect(result.billingHistory).toHaveLength(3);
     expect(result.finalMessage).toContain('Here are your past 3 months of billing records (3 found):');
+  });
+
+  it('understands number words when asking for recent billing months', async () => {
+    detectIntentMock.mockResolvedValueOnce({
+      intent: 'billing_inquiry',
+      agents: ['billing'],
+      confidence: 0.9,
+    });
+
+    const result = await orchestrator.ask({
+      message: 'I want to see my last two months bill',
+      customerId: 'cust-001',
+    });
+
+    expect(result.stage).toBe('billing');
+    expect(result.billingHistory).toHaveLength(2);
+    const now = new Date();
+    expect(result.billingHistory?.map((record) => record.date)).toEqual([
+      new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - 2, 1)).toISOString().slice(0, 10),
+      new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - 1, 1)).toISOString().slice(0, 10),
+    ]);
+    expect(result.finalMessage).toContain('Here are your past 2 months of billing records (2 found):');
   });
 
   it('returns the requested number of billing records for bill-count phrasing', async () => {

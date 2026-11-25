@@ -1,6 +1,7 @@
 import axios from 'axios';
 import type {
   AgentCommunicationTrace,
+  ActivationStatus,
   AskAction,
   AutopilotSettings,
   BillingRecord,
@@ -144,6 +145,11 @@ export const api = {
     return data;
   },
 
+  getActivationStatus: async (customerId: string): Promise<ActivationStatus> => {
+    const { data } = await apiClient.get<ActivationStatus>(`/recharge/status/${customerId}`);
+    return data;
+  },
+
   getSupportTickets: async (customerId: string): Promise<SupportTicket[]> => {
     const { data } = await apiClient.get<SupportTicket[]>(`/support/tickets/${customerId}`);
     return data;
@@ -191,6 +197,11 @@ export const api = {
   synthesizeSpeech: async (text: string, voice: 'alloy' | 'echo' | 'fable' | 'onyx' | 'nova' | 'shimmer' = 'nova'): Promise<Blob> => {
     const { data } = await apiClient.post('/speech/tts', { text, voice }, { responseType: 'arraybuffer' });
     return new Blob([data], { type: 'audio/mpeg' });
+  },
+
+  summarizeVoiceResponse: async (text: string): Promise<{ summary: string }> => {
+    const { data } = await apiClient.post<{ summary: string }>('/speech/summary', { text });
+    return data;
   },
 
   createRealtimeSession: async (customerId: string): Promise<Record<string, unknown>> => {

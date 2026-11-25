@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { CustomerIntelligence } from './customer-intelligence.service';
 import { CustomPlan } from './custom-plan-composer.service';
+import { formatCurrencyAmount } from './currency.utils';
 
 interface TemplateContext {
   message: string;
@@ -14,9 +15,9 @@ export class TellyResponseTemplateService {
   buildRecommendationMessage(ctx: TemplateContext): string {
     const { message, customerName, customPlan, intelligence } = ctx;
     const firstName = customerName.split(' ')[0];
-    const price = `₹${customPlan.price.toFixed(0)}/mo`;
+    const price = `${formatCurrencyAmount(customPlan.price, customPlan.currency)}/mo`;
     const components = customPlan.components
-      .map((c) => `**${c.name}** (₹${c.monthlyPrice}/mo)`)
+      .map((c) => `**${c.name}** (${formatCurrencyAmount(c.monthlyPrice, customPlan.currency)}/mo)`)
       .join(', ');
     const savingsLine = customPlan.discountNote
       ? `\n🎁 ${customPlan.discountNote}.`
@@ -27,8 +28,11 @@ export class TellyResponseTemplateService {
     const opener = this.pickOpener(tone, intelligence, firstName, customPlan);
     const body = this.buildBody(tone, intelligence, customPlan, price, components);
     const close = this.pickClose(tone, intelligence);
+    const currencyNote = customPlan.currencyRateDate
+      ? `\n\nEUR amounts converted from the INR catalog using ECB reference rates dated ${customPlan.currencyRateDate}.`
+      : '';
 
-    return `${opener}\n\n${body}${savingsLine}\n\n${close}`.trim();
+    return `${opener}\n\n${body}${currencyNote}${savingsLine}\n\n${close}`.trim();
   }
 
   private detectTone(message: string): string {
@@ -94,7 +98,7 @@ export class TellyResponseTemplateService {
       case 'business':
         return `Reliable data, calling, and connectivity features that match how you work — nothing superfluous, nothing missing.`;
       case 'budget':
-        return `I've trimmed everything unnecessary so you get maximum value. Every rupee in this plan is working for you.`;
+        return `I've trimmed everything unnecessary so you get maximum value. Every part of this plan is working for you.`;
       case 'advice':
         return `Your current usage tells me this is the right fit. It covers your data peaks, calling habits, and anticipated needs with headroom to grow.`;
       case 'premium':

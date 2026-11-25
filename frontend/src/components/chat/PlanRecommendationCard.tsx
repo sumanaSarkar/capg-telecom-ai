@@ -1,4 +1,5 @@
 import type { Plan } from '../../services/types';
+import { formatCurrency } from '../../services/currency';
 import styles from './PlanRecommendationCard.module.css';
 
 interface PlanRecommendationCardProps {
@@ -18,6 +19,7 @@ export function PlanRecommendationCard({
 }: PlanRecommendationCardProps) {
   const isCustom = Boolean(plan.isCustom);
   const hasComponents = isCustom && Array.isArray(plan.components) && plan.components.length > 0;
+  const currency = plan.currency ?? 'USD';
 
   return (
     <div className={`${styles.card} ${isCustom ? styles.customCard : ''}`}>
@@ -30,10 +32,15 @@ export function PlanRecommendationCard({
 
       <div className={styles.header}>
         <span className={styles.planName}>{plan.name}</span>
-        <span className={styles.price}>₹{plan.price.toFixed(0)}/mo</span>
+        <span className={styles.price}>{formatCurrency(plan.price, currency)}/mo</span>
       </div>
 
       <p className={styles.reason}>{reason}</p>
+      {plan.currencyRateDate && (
+        <p className={styles.currencyNote}>
+          EUR equivalent using ECB reference rate dated {plan.currencyRateDate}.
+        </p>
+      )}
 
       {hasComponents && (
         <div className={styles.components}>
@@ -43,7 +50,7 @@ export function PlanRecommendationCard({
               <li key={component.name} className={styles.componentItem}>
                 <span className={styles.componentName}>{component.name}</span>
                 <span className={styles.componentDesc}>{component.description}</span>
-                <span className={styles.componentPrice}>₹{component.monthlyPrice}/mo</span>
+                <span className={styles.componentPrice}>{formatCurrency(component.monthlyPrice, currency)}/mo</span>
               </li>
             ))}
           </ul>
@@ -74,7 +81,7 @@ export function PlanRecommendationCard({
         <div className={styles.discountNote}>
           🎁 {plan.discountNote}
           {plan.estimatedSavings !== undefined && (
-            <span className={styles.savingsBadge}>Save ₹{plan.estimatedSavings.toFixed(0)} per year</span>
+            <span className={styles.savingsBadge}>Save {formatCurrency(plan.estimatedSavings, currency)} per year</span>
           )}
         </div>
       )}

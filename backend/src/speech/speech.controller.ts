@@ -14,7 +14,7 @@ import {
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { ApiConsumes, ApiOperation, ApiTags } from '@nestjs/swagger';
-import { IsIn, IsNotEmpty, IsOptional, IsString } from 'class-validator';
+import { IsIn, IsNotEmpty, IsOptional, IsString, MaxLength } from 'class-validator';
 import type { Response } from 'express';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { SpeechService } from './speech.service';
@@ -33,6 +33,13 @@ export class RealtimeSessionDto {
   @IsOptional()
   @IsString()
   customerId?: string;
+}
+
+export class VoiceSummaryDto {
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(4000)
+  text!: string;
 }
 
 @ApiTags('Speech')
@@ -85,6 +92,17 @@ export class SpeechController {
     res.setHeader('Content-Type', 'audio/mpeg');
     res.setHeader('Content-Length', audioBuffer.byteLength);
     res.end(Buffer.from(audioBuffer));
+  }
+
+  @Post('summary')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Rewrite a spoken agent response as concise, natural chat text' })
+  async summarizeVoiceResponse(@Body() dto: VoiceSummaryDto): Promise<{ summary: string }> {
+    if (!this.speechService.isAvailable()) {
+      throw new ServiceUnavailableException('Voice summaries require OPENAI_API_KEY.');
+    }
+
+    return { summary: await this.speechService.summarizeVoiceResponse(dto.text) };
   }
 
   @Post('realtime/session')
