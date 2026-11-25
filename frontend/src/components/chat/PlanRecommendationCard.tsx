@@ -36,9 +36,10 @@ export function PlanRecommendationCard({
       </div>
 
       <p className={styles.reason}>{reason}</p>
-      {plan.currencyRateDate && (
+      {(plan.currencyRateDate || plan.currencyNote) && (
         <p className={styles.currencyNote}>
-          EUR equivalent using ECB reference rate dated {plan.currencyRateDate}.
+          {plan.currencyNote ??
+            `Converted from the INR catalog using reference rates dated ${plan.currencyRateDate}.`}
         </p>
       )}
 

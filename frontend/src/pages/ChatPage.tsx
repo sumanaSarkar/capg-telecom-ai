@@ -12,6 +12,7 @@ import { useAuth } from '../hooks/useAuth';
 import { useChat } from '../hooks/useChat';
 import { api } from '../services/api';
 import { buildBillEmailUrl } from '../services/billEmail';
+import type { CurrencyCode } from '../services/currency';
 import type { ChatMessage } from '../hooks/useChat';
 import type { AgentCommunicationTrace, OrchestratorResponse } from '../services/types';
 import styles from './ChatPage.module.css';
@@ -527,7 +528,6 @@ export function ChatPage() {
 
   const handleConfirmPlan = async (messageId: string, response: OrchestratorResponse) => {
     if (!response.recommendation) return;
-    markActioned(messageId);
     setLoading(true);
     setError(null);
     try {
@@ -537,9 +537,24 @@ export function ChatPage() {
         'confirm',
         response.recommendation.plan.id,
       );
+      markActioned(messageId);
       appendAssistantResponse(nextResponse);
-    } catch {
-      setError('Unable to proceed with the recharge right now. Please try again.');
+    } catch (error) {
+      if (axios.isAxiosError(error)) {
+        if (error.response?.status === 401) {
+          setError('Your sign-in expired, so the plan was not activated. Please sign in again, then select the plan.');
+        } else if (error.response?.status === 503) {
+          setError('The activation service is temporarily unavailable. Your plan is not active and no payment confirmation was recorded. Wait a moment, then try “Yes, activate this plan” again. If it keeps failing, refresh the recommendations or contact support.');
+        } else if (error.response?.status === 404 || error.response?.status === 400) {
+          setError('That plan is no longer available, and it has not been activated. Ask Telly for an updated recommendation, then choose a plan again.');
+        } else if (!error.response) {
+          setError('I could not reach the activation service. Your plan is not active. Check your connection, then retry with “Yes, activate this plan” above.');
+        } else {
+          setError('Activation could not start right now. Your plan is not active and no payment confirmation was recorded. Please retry with the button above; if it happens again, refresh or contact support.');
+        }
+      } else {
+        setError('Activation could not start right now. Your plan is not active and no payment confirmation was recorded. Please retry with the button above; if it happens again, refresh or contact support.');
+      }
     } finally {
       setLoading(false);
     }
@@ -1116,7 +1131,7 @@ export function ChatPage() {
                         (message.response.context?.plan as { price?: number } | undefined)?.price
                       }
                       currency={
-                        (message.response.context?.plan as { currency?: 'EUR' | 'INR' | 'USD' } | undefined)?.currency
+                        (message.response.context?.plan as { currency?: CurrencyCode } | undefined)?.currency
                       }
                       onComplete={() => {
                         const plan = message.response?.context?.plan as { id: string } | undefined;

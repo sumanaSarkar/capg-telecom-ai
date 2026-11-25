@@ -1103,8 +1103,10 @@ export class OrchestratorService {
       decision.purpose === 'data' ? 'mostly data' : decision.purpose === 'voice' ? 'mostly calls' : 'both data and calls';
     const offerNote = balanced.discountNote ?? 'Because you are a valued customer, I will keep your current benefits intact while you are away.';
     const currencyNote = balanced.currencyRateDate
-      ? ` Prices are EUR equivalents converted using ECB reference rates dated ${balanced.currencyRateDate}.`
-      : '';
+      ? ` Prices are shown in ${balanced.currency} after conversion from the INR catalog using exchange rates dated ${balanced.currencyRateDate}.`
+      : balanced.currencyNote
+        ? ` ${balanced.currencyNote}`
+        : '';
 
     const finalMessage =
       `${firstName}, ${place}${stay} with ${need} — I have built three options for you, using only ${provider} packs so everything works on your own network:\n` +

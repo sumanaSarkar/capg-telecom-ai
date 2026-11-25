@@ -32,10 +32,10 @@ describe('OrchestratorService', () => {
 
   const createCustomPlanComposer = () => {
     const currencyRateService = new CurrencyRateService();
-    jest.spyOn(currencyRateService, 'getInrToEurRate').mockResolvedValue({
-      rate: 0.01,
+    jest.spyOn(currencyRateService, 'getInrToCurrencyRate').mockImplementation(async (currency) => ({
+      rate: currency === 'EUR' ? 0.01 : 1.71,
       date: '2026-11-25',
-    });
+    }));
     return new CustomPlanComposerService(currencyRateService);
   };
 
@@ -607,6 +607,19 @@ describe('OrchestratorService', () => {
     expect(result.finalMessage).toContain('€');
     expect(result.finalMessage).not.toContain('₹');
     expect(result.finalMessage).not.toContain('$');
+  });
+
+  it('converts Japan roaming recommendations to JPY instead of INR', async () => {
+    const result = await orchestrator.ask({
+      message: 'I am going to Japan for three weeks, I need a mobile data plan',
+      customerId: 'cust-001',
+    });
+
+    const plan = result.recommendation?.plan;
+    expect(plan?.currency).toBe('JPY');
+    expect(plan?.currencyRateDate).toBe('2026-11-25');
+    expect(result.finalMessage).toMatch(/[¥￥]/);
+    expect(result.finalMessage).not.toContain('₹');
   });
 
   it('keeps actionable telecom follow-ups out of generic chat fallback', async () => {

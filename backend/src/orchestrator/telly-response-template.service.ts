@@ -29,8 +29,10 @@ export class TellyResponseTemplateService {
     const body = this.buildBody(tone, intelligence, customPlan, price, components);
     const close = this.pickClose(tone, intelligence);
     const currencyNote = customPlan.currencyRateDate
-      ? `\n\nEUR amounts converted from the INR catalog using ECB reference rates dated ${customPlan.currencyRateDate}.`
-      : '';
+      ? `\n\n${customPlan.currency} prices converted from the INR catalog using exchange rates dated ${customPlan.currencyRateDate}.`
+      : customPlan.currencyNote
+        ? `\n\n${customPlan.currencyNote}`
+        : '';
 
     return `${opener}\n\n${body}${currencyNote}${savingsLine}\n\n${close}`.trim();
   }

@@ -1,3 +1,5 @@
+import type { CurrencyCode } from './currency';
+
 export interface CustomerProfile {
   customerId: string;
   name: string;
@@ -43,8 +45,9 @@ export interface Plan {
   dataGB: number;
   callMinutes: number;
   price: number;
-  currency?: 'EUR' | 'INR' | 'USD';
+  currency?: CurrencyCode;
   currencyRateDate?: string;
+  currencyNote?: string;
   features: string[];
   recommended: boolean;
   // custom composed plan extras

@@ -4,7 +4,7 @@ import { CustomerProfile } from '../agents/profile/profile.model';
 import { CustomerIntelligence } from './customer-intelligence.service';
 import { OFFER_CATALOG, OfferCatalogItem } from './offer-catalog';
 import { CurrencyRateService } from './currency-rate.service';
-import { formatCurrencyAmount, roundCurrencyAmount } from './currency.utils';
+import { formatCurrencyAmount, roundCurrencyAmount, type TelecomCurrency } from './currency.utils';
 
 export interface CustomPlanComponent {
   name: string;
@@ -26,8 +26,9 @@ export interface CustomPlan {
   exclusiveBadge?: string;
   estimatedSavings?: number;
   provider?: string;
-  currency: 'EUR' | 'INR';
+  currency: TelecomCurrency;
   currencyRateDate?: string;
+  currencyNote?: string;
 }
 
 @Injectable()
@@ -64,18 +65,21 @@ export class CustomPlanComposerService {
       description: `${component.description} Available on ${provider}.`,
     }));
 
-    const currency = this.getDestinationCurrency(destination);
-    const exchangeRate = currency === 'EUR' ? await this.currencyRateService.getInrToEurRate() : null;
+    const { currency, currencyNote } = this.getDestinationCurrency(destination);
+    const exchangeRate = currency === 'INR'
+      ? null
+      : await this.currencyRateService.getInrToCurrencyRate(currency);
     const conversionRate = exchangeRate?.rate ?? 1;
     const pricedComponents = providerComponents.map((component) => ({
       ...component,
-      monthlyPrice: roundCurrencyAmount(component.monthlyPrice * conversionRate),
+      monthlyPrice: roundCurrencyAmount(component.monthlyPrice * conversionRate, currency),
     }));
     const basePrice = pricedComponents.reduce((sum, component) => sum + component.monthlyPrice, 0);
     const discount = roundCurrencyAmount(
       this.resolveDiscount(intelligence, providerComponents.length) * conversionRate,
+      currency,
     );
-    const finalPrice = Math.max(roundCurrencyAmount(basePrice - discount), 0);
+    const finalPrice = Math.max(roundCurrencyAmount(basePrice - discount, currency), 0);
 
     const dataGB = baseData.tag === 'unlimited' ? -1 : this.parseDataGB(baseData);
     const callMinutes = voiceTier.tag === 'unlimited-calls' ? -1 : this.parseCallMinutes(voiceTier);
@@ -86,7 +90,7 @@ export class CustomPlanComposerService {
     const discountNote = discount > 0
       ? `Exclusive offer for ${profile.name}: save ${formatCurrencyAmount(discount, currency)}/month`
       : undefined;
-    const estimatedSavings = discount > 0 ? roundCurrencyAmount(discount * 12) : undefined;
+    const estimatedSavings = discount > 0 ? roundCurrencyAmount(discount * 12, currency) : undefined;
 
     return {
       id: `custom-${Date.now()}`,
@@ -96,6 +100,7 @@ export class CustomPlanComposerService {
       callMinutes,
       currency,
       currencyRateDate: exchangeRate?.date,
+      currencyNote,
       price: finalPrice,
       features,
       components: pricedComponents,
@@ -211,8 +216,17 @@ export class CustomPlanComposerService {
 
   private resolveRoamingDestination(normalized: string): string | undefined {
     const destinations = [
-      'hawaii', 'sydney', 'austria', 'liverpool', 'manila', 'philippines', 'china', 'asia', 'japan', 'tokyo', 'osaka', 'kenya', 'bhutan', 'usa', 'united states',
-      'uk', 'united kingdom', 'uae', 'dubai', 'thailand', 'maldives', 'netherlands', 'amsterdam', 'france', 'germany', 'spain',
+      'hawaii', 'sydney', 'australia', 'austria', 'liverpool', 'manila', 'philippines',
+      'china', 'asia', 'japan', 'tokyo', 'osaka', 'kenya', 'bhutan', 'usa', 'united states',
+      'uk', 'united kingdom', 'uae', 'dubai', 'thailand', 'maldives', 'netherlands', 'amsterdam',
+      'france', 'paris', 'germany', 'berlin', 'spain', 'madrid', 'rome', 'lisbon', 'vienna',
+      'brussels', 'london', 'belgium', 'croatia', 'cyprus', 'estonia', 'finland',
+      'greece', 'ireland', 'italy', 'latvia', 'lithuania', 'luxembourg', 'malta', 'portugal',
+      'slovakia', 'slovenia', 'singapore', 'canada', 'switzerland', 'hong kong', 'south korea',
+      'korea', 'indonesia', 'israel', 'iceland', 'mexico', 'malaysia', 'norway', 'poland',
+      'romania', 'sweden', 'turkey', 'south africa', 'brazil', 'czech republic', 'czechia',
+      'denmark', 'hungary', 'new zealand', 'united arab emirates', 'india', 'seoul', 'bangkok',
+      'bali', 'kuala lumpur', 'zurich', 'toronto', 'auckland',
     ];
     const knownDestination = destinations.find((destination) => normalized.includes(destination));
     if (knownDestination) return knownDestination;
@@ -223,13 +237,104 @@ export class CustomPlanComposerService {
     return destinationMatch?.[1]?.trim();
   }
 
-  private getDestinationCurrency(destination?: string): 'EUR' | 'INR' {
-    const euroAreaDestinations = new Set([
-      'amsterdam', 'austria', 'belgium', 'croatia', 'cyprus', 'estonia', 'finland',
-      'france', 'germany', 'greece', 'ireland', 'italy', 'latvia', 'lithuania',
-      'luxembourg', 'malta', 'netherlands', 'portugal', 'slovakia', 'slovenia', 'spain',
-    ]);
-    return destination && euroAreaDestinations.has(destination) ? 'EUR' : 'INR';
+  private getDestinationCurrency(
+    destination?: string,
+  ): { currency: TelecomCurrency; currencyNote?: string } {
+    const destinationCurrencies: Record<string, TelecomCurrency> = {
+      amsterdam: 'EUR',
+      austria: 'EUR',
+      belgium: 'EUR',
+      croatia: 'EUR',
+      cyprus: 'EUR',
+      estonia: 'EUR',
+      finland: 'EUR',
+      france: 'EUR',
+      paris: 'EUR',
+      germany: 'EUR',
+      berlin: 'EUR',
+      vienna: 'EUR',
+      brussels: 'EUR',
+      madrid: 'EUR',
+      rome: 'EUR',
+      lisbon: 'EUR',
+      greece: 'EUR',
+      ireland: 'EUR',
+      italy: 'EUR',
+      latvia: 'EUR',
+      lithuania: 'EUR',
+      luxembourg: 'EUR',
+      malta: 'EUR',
+      netherlands: 'EUR',
+      portugal: 'EUR',
+      slovakia: 'EUR',
+      slovenia: 'EUR',
+      spain: 'EUR',
+      hawaii: 'USD',
+      usa: 'USD',
+      'united states': 'USD',
+      'new york': 'USD',
+      london: 'GBP',
+      sydney: 'AUD',
+      australia: 'AUD',
+      liverpool: 'GBP',
+      uk: 'GBP',
+      'united kingdom': 'GBP',
+      manila: 'PHP',
+      philippines: 'PHP',
+      china: 'CNY',
+      japan: 'JPY',
+      tokyo: 'JPY',
+      osaka: 'JPY',
+      kenya: 'KES',
+      bhutan: 'BTN',
+      uae: 'AED',
+      'united arab emirates': 'AED',
+      dubai: 'AED',
+      thailand: 'THB',
+      bangkok: 'THB',
+      maldives: 'MVR',
+      singapore: 'SGD',
+      canada: 'CAD',
+      switzerland: 'CHF',
+      zurich: 'CHF',
+      toronto: 'CAD',
+      'hong kong': 'HKD',
+      'south korea': 'KRW',
+      korea: 'KRW',
+      seoul: 'KRW',
+      indonesia: 'IDR',
+      bali: 'IDR',
+      israel: 'ILS',
+      iceland: 'ISK',
+      mexico: 'MXN',
+      malaysia: 'MYR',
+      'kuala lumpur': 'MYR',
+      norway: 'NOK',
+      'new zealand': 'NZD',
+      auckland: 'NZD',
+      poland: 'PLN',
+      romania: 'RON',
+      sweden: 'SEK',
+      turkey: 'TRY',
+      'south africa': 'ZAR',
+      brazil: 'BRL',
+      'czech republic': 'CZK',
+      czechia: 'CZK',
+      denmark: 'DKK',
+      hungary: 'HUF',
+      india: 'INR',
+    };
+    if (!destination) return { currency: 'INR' };
+
+    const currency = destinationCurrencies[destination];
+    if (!currency) {
+      return {
+        currency: 'INR',
+        currencyNote: `The local currency for ${destination} is not configured, so prices are shown in INR.`,
+      };
+    }
+
+    return { currency };
   }
 
   private buildRoamingComponent(destination: string, tripDays?: number): CustomPlanComponent {

@@ -44,6 +44,9 @@ and payment flow end-to-end.
   asks an internal `RecommendationService` to rank plans against the
   customer's usage, generates a natural-language rationale, and then drives
   a stateful (but request-driven) conversation through payment and recharge.
+- **Roaming prices** — recommendations convert the INR catalog into the
+  recognized destination country's currency, including component prices and
+  discounts, using dated exchange rates.
 - **Common** — global exception filter, correlation-ID logging interceptor,
   and a generic `ApiResponseDto<T>` wrapper.
 

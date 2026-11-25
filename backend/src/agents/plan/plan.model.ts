@@ -4,8 +4,43 @@ export interface Plan {
   dataGB: number;
   callMinutes: number;
   price: number;
-  currency?: 'EUR' | 'INR' | 'USD';
+  currency?:
+    | 'AED'
+    | 'AUD'
+    | 'BRL'
+    | 'BTN'
+    | 'CAD'
+    | 'CHF'
+    | 'CNY'
+    | 'CZK'
+    | 'DKK'
+    | 'EUR'
+    | 'GBP'
+    | 'HKD'
+    | 'HUF'
+    | 'IDR'
+    | 'ILS'
+    | 'INR'
+    | 'ISK'
+    | 'JPY'
+    | 'KES'
+    | 'KRW'
+    | 'MXN'
+    | 'MVR'
+    | 'MYR'
+    | 'NOK'
+    | 'NZD'
+    | 'PHP'
+    | 'PLN'
+    | 'RON'
+    | 'SEK'
+    | 'SGD'
+    | 'THB'
+    | 'TRY'
+    | 'USD'
+    | 'ZAR';
   currencyRateDate?: string;
+  currencyNote?: string;
   features: string[];
   recommended: boolean;
 }
