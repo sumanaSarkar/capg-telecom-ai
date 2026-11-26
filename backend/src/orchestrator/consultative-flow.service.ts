@@ -229,6 +229,12 @@ export class ConsultativeFlowService {
 
   private extractDays(message: string, bare: boolean): number | undefined {
     if (/\b(?:a|one)\s+week\b/i.test(message)) return 7;
+    if (/\b(?:a|one)\s+month\b/i.test(message)) return 30;
+    const months = message.match(/\b(\d+|[a-z]+)\s*months?\b/i);
+    if (months) {
+      const count = parseCount(months[1]);
+      if (count) return count * 30;
+    }
     const weeks = message.match(/\b(\d+|[a-z]+)\s*weeks?\b/i);
     if (weeks) {
       const count = parseCount(weeks[1]);
@@ -294,7 +300,13 @@ export class ConsultativeFlowService {
     const before = JSON.stringify([state.destination, state.days, state.purpose, state.dataGB]);
 
     if (!state.destination) {
-      const candidate = (this.extractDestination(message) ?? message.replace(/^(?:to|in|it'?s|i\s+will\s+go\s+to)\s+/i, '').replace(/[.,!?]+$/, '')).toLowerCase();
+      const candidate = (
+        this.extractDestination(message) ??
+        message
+          .replace(/^(?:i\s+mean|to|in|it'?s|i\s+will\s+go\s+to)\s+/i, '')
+          .replace(/\s+(?:for|in|with|and)\b.*$/i, '')
+          .replace(/[.,!?]+$/, '')
+      ).toLowerCase();
       if (candidate && candidate.split(/\s+/).length <= 3 && isKnownPlace(candidate)) state.destination = candidate;
     }
     if (state.destination) {

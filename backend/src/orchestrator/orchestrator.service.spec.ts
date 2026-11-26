@@ -39,6 +39,32 @@ describe('OrchestratorService', () => {
     return new CustomPlanComposerService(currencyRateService);
   };
 
+  const createSupportEnabledOrchestrator = (supportService: SupportService) =>
+    new OrchestratorService(
+      llmProvider,
+      profileService,
+      analyticsService,
+      planService,
+      paymentService,
+      rechargeService,
+      roamingService,
+      billingService,
+      new RecommendationService(),
+      new DecisionEngineService(),
+      new CustomerIntelligenceService(),
+      createCustomPlanComposer(),
+      undefined as never,
+      new TellyResponseTemplateService(),
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      new ConsultativeFlowService(),
+      supportService,
+    );
+
   beforeEach(() => {
     detectIntentMock = jest.fn().mockResolvedValue({
       intent: 'plan_analytics_profile_inquiry',
@@ -164,7 +190,96 @@ describe('OrchestratorService', () => {
     const customPlan = (result.recommendation?.plan as Record<string, unknown>);
     expect(customPlan.isCustom).toBe(true);
     expect(typeof customPlan.name).toBe('string');
+    expect(customPlan.currency).toBe('USD');
+    expect(result.finalMessage).not.toContain('₹');
+    expect(result.finalMessage).toContain('$');
     expect(result.finalMessage).toContain('Personalised');
+  });
+
+  it('uses the exact requested catalog plan and does not start an unsupported future activation', async () => {
+    const initiatePaymentSpy = jest.spyOn(paymentService, 'initiatePayment');
+
+    const result = await orchestrator.ask({
+      message: 'activate premium unlimited plan for me from next month 1st dec',
+      customerId: 'cust-001',
+    });
+
+    expect(result.stage).toBe('complete');
+    expect(result.recommendation).toBeUndefined();
+    expect(result.finalMessage).toContain('Premium Unlimited');
+    expect(result.finalMessage).toContain('$89.99/month');
+    expect(result.finalMessage).toContain('next month 1st dec');
+    expect(result.finalMessage).toMatch(/future-dated activation is not supported/i);
+    expect(result.context).toMatchObject({
+      requestedPlan: { id: 'plan-003', name: 'Premium Unlimited' },
+      schedulingSupported: false,
+    });
+    expect(initiatePaymentSpy).not.toHaveBeenCalled();
+    expect(rechargeService.getActivationStatus('cust-001').status).toBe('not_activated');
+  });
+
+  it('recommends the exact requested catalog plan when no future start date is given', async () => {
+    const listed = await orchestrator.ask({
+      message: 'show all available plans',
+      customerId: 'cust-001',
+    });
+    const result = await orchestrator.ask({
+      message: 'activate standard plan',
+      customerId: 'cust-001',
+    });
+
+    expect(listed.availablePlans?.every((plan) => plan.currency === 'USD')).toBe(true);
+    expect(result.stage).toBe('recommendation');
+    expect(result.recommendation?.plan).toMatchObject({
+      id: 'plan-002',
+      name: 'Standard 20GB',
+      dataGB: 20,
+      price: 59.99,
+      currency: 'USD',
+    });
+    expect(result.finalMessage).toContain('exact Standard 20GB plan');
+    expect(result.finalMessage).toContain('$59.99/month');
+    expect(result.finalMessage).not.toContain('₹');
+  });
+
+  it('asks which plan the user means when a past plan list leaves a contextual reference ambiguous', async () => {
+    await orchestrator.ask({
+      message: 'show all available plans',
+      customerId: 'cust-001',
+    });
+
+    const result = await orchestrator.ask({
+      message: 'activate that plan',
+      customerId: 'cust-001',
+    });
+
+    expect(result.stage).toBe('plans');
+    expect(result.recommendation).toBeUndefined();
+    expect(result.availablePlans).toHaveLength(3);
+    expect(result.finalMessage).toContain('choose from the available plans');
+    expect(result.finalMessage).toContain('I won\'t prepare payment');
+  });
+
+  it('uses the single plan in recent conversation context for a follow-up reference', async () => {
+    await orchestrator.ask({
+      message: 'show all available plans',
+      customerId: 'cust-001',
+    });
+    await orchestrator.ask({
+      message: 'activate standard plan',
+      customerId: 'cust-001',
+    });
+
+    const result = await orchestrator.ask({
+      message: 'activate that plan',
+      customerId: 'cust-001',
+    });
+
+    expect(result.recommendation?.plan).toMatchObject({
+      id: 'plan-002',
+      name: 'Standard 20GB',
+      currency: 'USD',
+    });
   });
 
   it('starts a plan-intake conversation for vague plan requests and keeps qualification answers in that conversation', async () => {
@@ -196,7 +311,7 @@ describe('OrchestratorService', () => {
     expect(chatMock).toHaveBeenCalledTimes(3);
   });
 
-  it('guides a travel conversation turn by turn into three same-carrier plan options', async () => {
+  it('does not present a custom travel plan as verified when the catalog cannot meet the data request', async () => {
     const supportService = new SupportService();
     const flowOrchestrator = new OrchestratorService(
       llmProvider, profileService, analyticsService, planService, paymentService, rechargeService,
@@ -216,12 +331,137 @@ describe('OrchestratorService', () => {
     expect(step1.stage).toBe('complete');
     expect(step2.finalMessage).toMatch(/data|calls/i);
     expect(step3.finalMessage).toMatch(/how much data/i);
-    expect(offer.stage).toBe('recommendation');
-    expect(offer.finalMessage).toMatch(/Essential/);
-    expect(offer.finalMessage).toMatch(/Balanced/);
-    expect(offer.finalMessage).toMatch(/Premium/);
-    expect(offer.finalMessage).toMatch(/Airtel/);
-    expect(offer.context?.planOptions).toBeDefined();
+    expect(offer.stage).toBe('complete');
+    expect(offer.recommendation).toBeUndefined();
+    expect(offer.finalMessage).toMatch(/25GB/);
+    expect(offer.finalMessage).toMatch(/quote request/i);
+    expect(offer.finalMessage).not.toMatch(/Essential|Balanced|Premium/);
+  });
+
+  it('retains the complete South Africa request and opens a quote only after confirmation', async () => {
+    const supportService = new SupportService();
+    const flowOrchestrator = new OrchestratorService(
+      llmProvider, profileService, analyticsService, planService, paymentService, rechargeService,
+      roamingService, billingService, new RecommendationService(), new DecisionEngineService(),
+      new CustomerIntelligenceService(), createCustomPlanComposer(), undefined as never,
+      new TellyResponseTemplateService(),
+      undefined, undefined, undefined, undefined, undefined, undefined,
+      new ConsultativeFlowService(), supportService,
+    );
+    const ask = (message: string) => flowOrchestrator.ask({ message, customerId: 'cust-001' });
+
+    const initial = await ask(
+      'I am going to South Africa for one month. I need 500GB data and 500 international calling minutes to Europe.',
+    );
+    const followUp = await ask('Yes, I need an eSIM option, and my company will sponsor the plan.');
+    const quote = await ask('Yes, please');
+
+    expect(initial.stage).toBe('complete');
+    expect(initial.recommendation).toBeUndefined();
+    expect(initial.finalMessage).toMatch(/30 days/);
+    expect(initial.finalMessage).toMatch(/500GB/);
+    expect(initial.finalMessage).toMatch(/500 international calling minutes to Europe/);
+    expect(initial.finalMessage).not.toMatch(/10GB|50GB/);
+    expect(followUp.finalMessage).toMatch(/eSIM/);
+    expect(followUp.finalMessage).toMatch(/company/);
+    expect(followUp.finalMessage).toMatch(/500GB/);
+    expect(followUp.finalMessage).toMatch(/Europe/);
+    expect(supportService.getTickets('cust-001')).toHaveLength(3);
+    expect(quote.finalMessage).toMatch(/sales quote request/);
+    const quoteTicket = supportService.getTickets('cust-001').find((ticket) => /Enterprise quote request/.test(ticket.issue));
+    expect(quoteTicket?.issue).toMatch(/South Africa/);
+    expect(quoteTicket?.issue).toMatch(/500GB/);
+    expect(quoteTicket?.issue).toMatch(/500 international minutes to Europe/);
+    expect(quoteTicket?.issue).toMatch(/eSIM requested/);
+    expect(quoteTicket?.issue).toMatch(/company-sponsored billing requested/);
+  });
+
+  it('triages network trouble with safe checks and gets consent before creating a support ticket', async () => {
+    const supportService = new SupportService();
+    const supportOrchestrator = createSupportEnabledOrchestrator(supportService);
+    const ask = (message: string) => supportOrchestrator.ask({ message, customerId: 'cust-001' });
+
+    const opening = await ask('My mobile data is slow in Pune.');
+    const triedChecks = await ask('No, I have not tried those steps yet.');
+    const stillBroken = await ask('It is still not working after restarting.');
+
+    expect(opening.finalMessage).toMatch(/live network telemetry/i);
+    expect(opening.finalMessage).toMatch(/already tried/i);
+    expect(triedChecks.finalMessage).toMatch(/After trying those steps/i);
+    expect(stillBroken.finalMessage).toMatch(/haven’t opened a ticket yet/i);
+    expect(stillBroken.finalMessage).toMatch(/Would you like me to open one/i);
+    expect(supportService.getTickets('cust-001')).toHaveLength(2);
+
+    const created = await ask('Yes, please');
+    expect(created.finalMessage).toMatch(/network support request/);
+    expect(supportService.getTickets('cust-001')).toHaveLength(3);
+    expect(supportService.getTickets('cust-001')[2].issue).toMatch(/slow data near Pune/i);
+  });
+
+  it('routes a poor-signal complaint to network care instead of a plan recommendation', async () => {
+    const response = await orchestrator.ask({
+      message: 'I have poor signal',
+      customerId: 'cust-001',
+    });
+
+    expect(response.intent).toBe('network_support');
+    expect(response.recommendation).toBeUndefined();
+    expect(response.finalMessage).toMatch(/outage/i);
+    expect(response.finalMessage).toMatch(/city or PIN code/i);
+    expect(response.context).toMatchObject({ networkIssue: 'weak-signal' });
+  });
+
+  it('compares recorded bills without inventing line items and requires consent to escalate', async () => {
+    const supportService = new SupportService();
+    const supportOrchestrator = createSupportEnabledOrchestrator(supportService);
+    const ask = (message: string) => supportOrchestrator.ask({ message, customerId: 'cust-001' });
+
+    const analysis = await ask('My latest bill is higher than expected.');
+
+    expect(analysis.finalMessage).toMatch(/latest and previous recorded bills are both/i);
+    expect(analysis.finalMessage).toMatch(/don’t include itemized usage or fee details/i);
+    expect(analysis.finalMessage).toMatch(/haven’t opened a ticket yet/i);
+    expect(supportService.getTickets('cust-001')).toHaveLength(2);
+
+    const created = await ask('Yes, please');
+    expect(created.finalMessage).toMatch(/billing support request/);
+    expect(supportService.getTickets('cust-001')).toHaveLength(3);
+  });
+
+  it('does not claim a failed recharge succeeded and requires consent to investigate', async () => {
+    const supportService = new SupportService();
+    const supportOrchestrator = createSupportEnabledOrchestrator(supportService);
+
+    const response = await supportOrchestrator.ask({
+      message: 'My recharge was debited but the data was not credited.',
+      customerId: 'cust-001',
+    });
+
+    expect(response.finalMessage).toMatch(/can’t verify this specific payment/i);
+    expect(response.finalMessage).toMatch(/don’t repeat the recharge/i);
+    expect(response.context).toMatchObject({ paymentStatusVerified: false });
+    expect(supportService.getTickets('cust-001')).toHaveLength(2);
+
+    const created = await supportOrchestrator.ask({
+      message: 'Yes, please',
+      customerId: 'cust-001',
+    });
+    expect(created.finalMessage).toMatch(/recharge support request/);
+    expect(supportService.getTickets('cust-001')).toHaveLength(3);
+  });
+
+  it('routes cancellation and port-out requests without silently changing service', async () => {
+    const supportService = new SupportService();
+    const supportOrchestrator = createSupportEnabledOrchestrator(supportService);
+
+    const response = await supportOrchestrator.ask({
+      message: 'I want to port my number out.',
+      customerId: 'cust-001',
+    });
+
+    expect(response.finalMessage).toMatch(/number porting aren’t connected/i);
+    expect(response.context).toMatchObject({ serviceChangePerformed: false });
+    expect(supportService.getTickets('cust-001')).toHaveLength(2);
   });
 
   it('responds to a lost phone with empathy, raises a SIM block ticket, then offers replacement and plans', async () => {
@@ -785,41 +1025,28 @@ describe('OrchestratorService', () => {
     expect((plan.name as string).startsWith('Telly')).toBe(true);
   });
 
-  it('creates a destination-specific Kenya roaming offer without unrelated gaming', async () => {
+  it('does not invent a Kenya roaming offer when the catalog cannot verify unlimited data', async () => {
     const result = await orchestrator.ask({
       message: 'Find a package for unlimited data in Kenya with Jio Hotstar',
       customerId: 'cust-001',
     });
 
-    const plan = result.recommendation?.plan as {
-      components: Array<{ name: string; description: string }>;
-    };
-    const componentNames = plan.components.map((component) => component.name);
-    const kenya = plan.components.find((component) => component.name === 'Kenya Roaming Pass');
-
-    expect(componentNames).toContain('Kenya Roaming Pass');
-    expect(componentNames).toContain('JioHotstar Subscription');
-    expect(componentNames.some((name) => name.includes('Gaming'))).toBe(false);
-    expect(kenya?.description).toContain('incoming calls ₹8/min');
-    expect(kenya?.description).toContain('outgoing calls ₹15/min');
+    expect(result.stage).toBe('complete');
+    expect(result.recommendation).toBeUndefined();
+    expect(result.finalMessage).toMatch(/Kenya/);
+    expect(result.finalMessage).toMatch(/quote request/i);
   });
 
-  it('never adds Gaming Turbo to a Bhutan OTT request unless gaming is requested', async () => {
+  it('does not invent a Bhutan roaming plan for a quantified data request', async () => {
     const result = await orchestrator.ask({
       message: 'Find a package in Bhutan with 50GB data unlimited call and can watch SonyLIV',
       customerId: 'cust-003',
     });
 
-    const plan = result.recommendation?.plan as {
-      name: string;
-      components: Array<{ name: string; description: string }>;
-    };
-    const componentNames = plan.components.map((component) => component.name);
-
-    expect(plan.name).toBe('Telly Bhutan Roaming Plan');
-    expect(componentNames).toContain('Bhutan Roaming Pass');
-    expect(componentNames).toContain('SonyLIV Subscription');
-    expect(componentNames.some((name) => /gaming|game/i.test(name))).toBe(false);
+    expect(result.stage).toBe('complete');
+    expect(result.recommendation).toBeUndefined();
+    expect(result.finalMessage).toMatch(/Bhutan/);
+    expect(result.finalMessage).toMatch(/quote request/i);
   });
 
   it('moves to the payment stage when the user confirms a plan', async () => {

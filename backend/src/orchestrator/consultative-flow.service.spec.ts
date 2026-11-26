@@ -27,6 +27,20 @@ describe('ConsultativeFlowService', () => {
     expect(offer).toMatchObject({ kind: 'travel_offer', destination: 'japan', days: 10 });
   });
 
+  it('converts a one-month trip into a 30-day travel requirement', () => {
+    const offer = flow.handle(
+      'c-month',
+      'I am going to South Africa for one month and need 500GB data and calls',
+    );
+
+    expect(offer).toMatchObject({
+      kind: 'travel_offer',
+      destination: 'south africa',
+      days: 30,
+      dataGB: 500,
+    });
+  });
+
   it('responds empathetically to a lost phone and proactively moves to block, replacement and offers', () => {
     const opening = flow.handle('c3', 'I lost my phone');
     expect((opening as { message: string }).message).toMatch(/sorry/i);

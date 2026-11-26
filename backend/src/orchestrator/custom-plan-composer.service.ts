@@ -40,6 +40,7 @@ export class CustomPlanComposerService {
     profile: CustomerProfile,
     analytics: CustomerAnalytics,
     intelligence: CustomerIntelligence,
+    accountCurrency: TelecomCurrency = 'USD',
   ): Promise<CustomPlan> {
     const normalized = message.toLowerCase();
     const provider = this.detectProvider(profile.currentNetwork);
@@ -65,7 +66,7 @@ export class CustomPlanComposerService {
       description: `${component.description} Available on ${provider}.`,
     }));
 
-    const { currency, currencyNote } = this.getDestinationCurrency(destination);
+    const { currency, currencyNote } = this.getDestinationCurrency(destination, accountCurrency);
     const exchangeRate = currency === 'INR'
       ? null
       : await this.currencyRateService.getInrToCurrencyRate(currency);
@@ -239,6 +240,7 @@ export class CustomPlanComposerService {
 
   private getDestinationCurrency(
     destination?: string,
+    accountCurrency: TelecomCurrency = 'USD',
   ): { currency: TelecomCurrency; currencyNote?: string } {
     const destinationCurrencies: Record<string, TelecomCurrency> = {
       amsterdam: 'EUR',
@@ -324,13 +326,13 @@ export class CustomPlanComposerService {
       hungary: 'HUF',
       india: 'INR',
     };
-    if (!destination) return { currency: 'INR' };
+    if (!destination) return { currency: accountCurrency };
 
     const currency = destinationCurrencies[destination];
     if (!currency) {
       return {
-        currency: 'INR',
-        currencyNote: `The local currency for ${destination} is not configured, so prices are shown in INR.`,
+        currency: accountCurrency,
+        currencyNote: `The local currency for ${destination} is not configured, so prices are shown in ${accountCurrency}.`,
       };
     }
 

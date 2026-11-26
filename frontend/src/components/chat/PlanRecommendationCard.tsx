@@ -87,6 +87,11 @@ export function PlanRecommendationCard({
         </div>
       )}
 
+      <p className={styles.activationNote}>
+        This is only a recommendation. Your plan will not change unless you choose to proceed;
+        activation happens only after payment is complete.
+      </p>
+
       <div className={styles.actions}>
         <button
           className={styles.confirmButton}

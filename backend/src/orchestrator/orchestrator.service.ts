@@ -87,12 +87,41 @@ export interface OrchestratorResponse {
   context?: Record<string, unknown>;
 }
 
+interface TravelPlanRequirements {
+  destination: string;
+  days?: number;
+  dataGB?: number;
+  unlimitedDataRequested: boolean;
+  internationalMinutes?: number;
+  internationalCallDestination?: string;
+  esimRequested: boolean;
+  companySponsored: boolean;
+  quotePending: boolean;
+}
+
+interface NetworkCareCase {
+  symptom: 'no-service' | 'weak-signal' | 'slow-data' | 'dropped-calls' | 'mobile-data';
+  location?: string;
+  diagnosticsTried: boolean;
+  awaiting: 'location' | 'diagnostics' | 'result';
+}
+
+interface PendingSupportRequest {
+  category: 'network' | 'billing' | 'recharge' | 'service-change';
+  issue: string;
+  priority: 'low' | 'medium' | 'high';
+}
+
 @Injectable()
 export class OrchestratorService {
   private readonly logger = new Logger(OrchestratorService.name);
   private readonly communicationHistory: AgentCommunicationTrace[] = [];
   private readonly conversationHistoryByCustomer = new Map<string, ConversationMessage[]>();
   private readonly recentAsks = new Map<string, { message: string; at: number; response: OrchestratorResponse }>();
+  private readonly presentedPlansByCustomer = new Map<string, Plan[]>();
+  private readonly travelRequirementsByCustomer = new Map<string, TravelPlanRequirements>();
+  private readonly networkCareByCustomer = new Map<string, NetworkCareCase>();
+  private readonly pendingSupportByCustomer = new Map<string, PendingSupportRequest>();
 
   constructor(
     @Inject(LLM_PROVIDER) private readonly llmProvider: ILlmProvider,
@@ -288,6 +317,30 @@ export class OrchestratorService {
     return /\b(current|my|existing|present)\s+plan\b/i.test(message) || /\bwhat\s+is\s+my\s+plan\b/i.test(message) || /\bwhich\s+plan\s+am\s+i\s+on\b/i.test(message);
   }
 
+  private isNetworkIssueRequest(message: string): boolean {
+    return /\b(?:no\s+(?:mobile\s+)?service|no\s+signal|weak\s+signal|poor\s+signal|poor\s+reception|network\s+(?:issue|outage)|slow\s+(?:mobile\s+)?(?:data|internet|connection)|(?:mobile\s+)?(?:data|internet|connection)\s+(?:is\s+)?(?:slow|not\s+working|keeps?\s+dropping)|(?:mobile\s+)?data\s+(?:is\s+)?not\s+working|internet\s+(?:is\s+)?not\s+working|internet\s+keeps?\s+disconnecting|dropped\s+calls?|calls?\s+(?:keep|keeps)\s+dropping|(?:cannot|can.t)\s+connect)\b/i.test(
+      message,
+    );
+  }
+
+  private isBillingConcern(message: string): boolean {
+    return /\b(?:high(?:er)?\s+bill|bill\s+(?:is\s+)?(?:too\s+high|higher|wrong|incorrect|unexpected)|overcharg(?:ed|ing)|unexpected\s+charge|unknown\s+charge|extra\s+charge|charged\s+twice|unrecognized\s+charge|unrecognised\s+charge|bill\s+dispute)\b/i.test(
+      message,
+    );
+  }
+
+  private isRechargeIssueRequest(message: string): boolean {
+    return /\b(?:recharge|top[-\s]?up)\b.{0,60}\b(?:deducted|debited|failed|not\s+credited|not\s+applied|missing|not\s+received|pending)\b|\b(?:money|payment)\b.{0,40}\b(?:deducted|debited)\b.{0,40}\b(?:recharge|top[-\s]?up)\b/i.test(
+      message,
+    );
+  }
+
+  private isServiceExitRequest(message: string): boolean {
+    return /\b(?:cancel|disconnect|terminate)\b.{0,35}\b(?:my\s+)?(?:account|service|connection|plan|line)\b|\bport\b.{0,30}\bout\b|\b(?:switch|move)\b.{0,30}\b(?:my\s+)?number\b.{0,20}\b(?:provider|operator|network)\b|\b(?:switch|leave)\s+(?:airtel|jio|my\s+provider)\b/i.test(
+      message,
+    );
+  }
+
   private isPayBillRequest(message: string): boolean {
     return /\b(pay(?:ing)?|clear|settle|make)\b.*\b(bill|invoice|due|pending|payment)\b/i.test(message) ||
       /\b(bill|invoice)\b.*\b(pay(?:ing)?|clear|settle)\b/i.test(message) ||
@@ -406,6 +459,29 @@ export class OrchestratorService {
     return /\b(available|all|list|show|compare)\b.*\broaming\b.*\bpackages?\b/i.test(message) || /\broaming\s+packages?\b/i.test(message) || /\broaming\s+options\b/i.test(message);
   }
 
+  private isNetworkCareFollowUp(message: string, networkCase: NetworkCareCase): boolean {
+    if (/\b(?:bill|billing|plan|recharge|roaming|e[\s-]?sim|payment|balance)\b/i.test(message)) {
+      return false;
+    }
+
+    if (networkCase.awaiting === 'location') {
+      const wordCount = this.normalizeText(message).trim().split(/\s+/).length;
+      return (
+        wordCount <= 6 &&
+        !this.isAffirmativeReply(message) &&
+        !this.isNegativeReply(message)
+      ) || /\b(?:in|at|near|around)\s+[a-z0-9]/i.test(message);
+    }
+
+    return (
+      this.isAffirmativeReply(message) ||
+      this.isNegativeReply(message) ||
+      /\b(?:still|fixed|working|tried|restart|reboot|airplane|reset|disconnect|signal|data|internet|call|service)\b/i.test(
+        message,
+      )
+    );
+  }
+
   private isTelecomRelatedRequest(message: string): boolean {
     const normalized = this.normalizeText(message);
     const telecomTerms = [
@@ -505,13 +581,108 @@ export class OrchestratorService {
       .trim();
   }
 
-  private resolveExplicitPlan(message: string, plans: Plan[]): Plan | undefined {
+  private findExplicitPlanMatches(message: string, plans: Plan[]): Plan[] {
     const normalizedMessage = this.normalizeText(message);
-
-    return plans.find((plan) => {
+    const messageTokens = new Set(normalizedMessage.split(' '));
+    const fullMatches = plans.filter((plan) => {
       const planTokens = this.normalizeText(plan.name).split(' ').filter(Boolean);
-      return planTokens.length > 0 && planTokens.every((token) => normalizedMessage.includes(token));
+      return planTokens.length > 0 && planTokens.every((token) => messageTokens.has(token));
     });
+    if (fullMatches.length > 0) return fullMatches;
+
+    const ignoredTokens = new Set([
+      'activate', 'switch', 'move', 'change', 'upgrade', 'subscribe', 'sign', 'me', 'up',
+      'for', 'from', 'starting', 'effective', 'beginning', 'on', 'next', 'month', 'week',
+      'tomorrow', 'today', 'the', 'plan', 'plans', 'package', 'packages', 'option', 'options',
+      'my', 'please', 'i', 'want', 'to', 'now', 'that', 'this', 'same', 'selected',
+      'recommended', 'it', 'a', 'an', 'do',
+    ]);
+    const requestedTokens = new Set(
+      normalizedMessage.split(' ').filter((token) => token && !ignoredTokens.has(token)),
+    );
+    if (requestedTokens.size === 0) return [];
+
+    return plans.filter((plan) =>
+      this.normalizeText(plan.name)
+        .split(' ')
+        .some((token) => requestedTokens.has(token)),
+    );
+  }
+
+  private isContextualPlanReference(message: string): boolean {
+    return /\b(?:(?:this|that|same|selected|recommended)\s+(?:plan|one)|(?:the)\s+one)\b|\b(?:activate|switch|move|change|upgrade)\s+it\b/i.test(
+      message,
+    );
+  }
+
+  private buildPlanClarificationResponse(
+    dto: AskDto,
+    intent: string,
+    agents: string[],
+    plans: Plan[],
+  ): OrchestratorResponse {
+    this.presentedPlansByCustomer.set(dto.customerId, plans);
+    const names = plans.map((plan) => plan.name).join(', ');
+    const finalMessage = `I couldn't identify one exact plan to activate. Please choose from the available plans: ${names}. I won't prepare payment until you select a specific plan.`;
+    this.appendConversationTurn(dto.customerId, { role: 'user', content: dto.message });
+    this.appendConversationTurn(dto.customerId, { role: 'assistant', content: finalMessage });
+    return {
+      intent,
+      agents: [...new Set([...agents, 'plan'])],
+      finalMessage,
+      stage: 'plans',
+      availablePlans: plans,
+    };
+  }
+
+  private isPlanActivationRequest(message: string): boolean {
+    const action = /\b(?:activate|switch|move|change|upgrade|subscribe|sign me up)\b/i;
+    const negatedAction = /\b(?:do not|don't|never|not)\b.{0,30}\b(?:activate|switch|move|change|upgrade|subscribe|sign me up)\b/i;
+    return action.test(message) && !negatedAction.test(message);
+  }
+
+  private getRequestedPlanStartDate(message: string): string | undefined {
+    const match = message.match(
+      /\b(?:from|starting|effective(?:\s+from)?|beginning(?:\s+on)?)\s+(?:the\s+)?((?:next\s+month(?:\s+\d{1,2}(?:st|nd|rd|th)?(?:\s+[a-z]+)?)?|next\s+week|tomorrow|(?:\d{1,2}(?:st|nd|rd|th)?\s+)?(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:tember)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)(?:\s+\d{4})?|\d{4}-\d{2}-\d{2}))/i,
+    );
+    return match?.[1]?.trim();
+  }
+
+  private handleExplicitPlanActivationRequest(
+    dto: AskDto,
+    intent: string,
+    agents: string[],
+    plan: Plan,
+  ): OrchestratorResponse {
+    const requestedStartDate = this.getRequestedPlanStartDate(dto.message);
+    this.presentedPlansByCustomer.set(dto.customerId, [plan]);
+    const dataAllowance = plan.dataGB < 0 ? 'unlimited data' : `${plan.dataGB}GB data`;
+    const callingAllowance = plan.callMinutes < 0 ? 'unlimited calls' : `${plan.callMinutes} call minutes`;
+    const price = `${formatCurrencyAmount(plan.price, plan.currency ?? 'USD')}/month`;
+    const resolvedAgents = [...new Set([...agents, 'plan'])];
+    const finalMessage = requestedStartDate
+      ? `I found the exact ${plan.name} plan you asked for: ${dataAllowance}, ${callingAllowance}, at ${price}. You requested it to start ${requestedStartDate}. Future-dated activation is not supported in this demo, so I have not started payment or changed your plan. If you want it to start now instead, say “activate ${plan.name} now.”`
+      : `I found the exact ${plan.name} plan you asked for: ${dataAllowance}, ${callingAllowance}, at ${price}. This is only a recommendation; nothing has changed. Choose the activation button below if you want to proceed.`;
+
+    this.appendConversationTurn(dto.customerId, { role: 'user', content: dto.message });
+    this.appendConversationTurn(dto.customerId, { role: 'assistant', content: finalMessage });
+
+    return requestedStartDate
+      ? {
+          intent,
+          agents: resolvedAgents,
+          finalMessage,
+          stage: 'complete',
+          context: { requestedPlan: plan, requestedStartDate, schedulingSupported: false },
+        }
+      : {
+          intent,
+          agents: resolvedAgents,
+          finalMessage,
+          recommendation: { plan, reason: 'This is the exact plan you asked for.' },
+          stage: 'recommendation',
+          context: { requestedPlan: plan },
+        };
   }
 
   getHistory(customerId: string): AgentCommunicationTrace[] {
@@ -525,6 +696,10 @@ export class OrchestratorService {
     this.communicationHistory.length = 0;
     this.communicationHistory.push(...retained);
     this.conversationHistoryByCustomer.delete(customerId);
+    this.presentedPlansByCustomer.delete(customerId);
+    this.travelRequirementsByCustomer.delete(customerId);
+    this.networkCareByCustomer.delete(customerId);
+    this.pendingSupportByCustomer.delete(customerId);
     this.consultativeFlow?.reset(customerId);
   }
 
@@ -676,9 +851,110 @@ export class OrchestratorService {
     intent: string,
     agents: string[],
   ): Promise<OrchestratorResponse> {
+    const isPlanActivationRequest = this.isPlanActivationRequest(dto.message);
+    const pendingSupport = this.pendingSupportByCustomer.get(dto.customerId);
+    if (pendingSupport && this.isAffirmativeReply(dto.message)) {
+      return this.openPendingSupportTicket(dto, intent, agents, pendingSupport);
+    }
+    if (pendingSupport && this.isNegativeReply(dto.message)) {
+      this.pendingSupportByCustomer.delete(dto.customerId);
+      const finalMessage = 'Understood. I have not opened a support ticket.';
+      this.appendConversationTurn(dto.customerId, { role: 'user', content: dto.message });
+      this.appendConversationTurn(dto.customerId, { role: 'assistant', content: finalMessage });
+      return { intent: 'support_inquiry', agents, finalMessage, stage: 'complete' };
+    }
+    if (pendingSupport) {
+      this.pendingSupportByCustomer.delete(dto.customerId);
+    }
+    const travelRequirements = this.travelRequirementsByCustomer.get(dto.customerId);
+    if (travelRequirements?.quotePending && this.isAffirmativeReply(dto.message)) {
+      return this.createTravelQuoteRequest(dto, intent, agents, travelRequirements);
+    }
+    if (travelRequirements?.quotePending && this.isNegativeReply(dto.message)) {
+      travelRequirements.quotePending = false;
+      const finalMessage =
+        'Understood — I have not opened a sales quote request. Your travel requirements remain available in this conversation if you want to revisit them.';
+      this.appendConversationTurn(dto.customerId, { role: 'user', content: dto.message });
+      this.appendConversationTurn(dto.customerId, { role: 'assistant', content: finalMessage });
+      return { intent: 'TELECOM_ROAMING', agents, finalMessage, stage: 'complete' };
+    }
+    if (travelRequirements && this.isTravelRequirementsFollowUp(dto.message)) {
+      this.mergeTravelRequirements(travelRequirements, dto.message);
+      return this.respondToTravelRequirements(dto, intent, agents, travelRequirements);
+    }
+    const networkCase = this.networkCareByCustomer.get(dto.customerId);
+    if (
+      this.isNetworkIssueRequest(dto.message) ||
+      (networkCase && this.isNetworkCareFollowUp(dto.message, networkCase))
+    ) {
+      this.clearPendingTravelQuote(dto.customerId);
+      return this.handleNetworkCare(dto, intent, agents, networkCase);
+    }
+    if (this.isBillingConcern(dto.message)) {
+      this.clearPendingTravelQuote(dto.customerId);
+      return this.handleBillingConcern(dto, intent, agents);
+    }
+    if (this.isRechargeIssueRequest(dto.message)) {
+      this.clearPendingTravelQuote(dto.customerId);
+      return this.handleRechargeConcern(dto, intent, agents);
+    }
+    if (this.isServiceExitRequest(dto.message)) {
+      this.clearPendingTravelQuote(dto.customerId);
+      return this.handleServiceExitRequest(dto, intent, agents);
+    }
+    const previouslyPresentedPlans = this.presentedPlansByCustomer.get(dto.customerId);
+    const isEsimActivationFollowUp = this.isEsimActivationFollowUp(dto.customerId, dto.message);
+    if (isPlanActivationRequest && !isEsimActivationFollowUp) {
+      const plansInContext = previouslyPresentedPlans ?? this.planService.getPlans(dto.customerId);
+      const matchingPlans = this.findExplicitPlanMatches(dto.message, plansInContext);
+      if (matchingPlans.length === 1) {
+        return this.handleExplicitPlanActivationRequest(dto, intent, agents, matchingPlans[0]);
+      }
+      if (matchingPlans.length > 1) {
+        return this.buildPlanClarificationResponse(dto, intent, agents, matchingPlans);
+      }
+      if (this.isContextualPlanReference(dto.message) && previouslyPresentedPlans?.length === 1) {
+        return this.handleExplicitPlanActivationRequest(dto, intent, agents, previouslyPresentedPlans[0]);
+      }
+      if (this.isContextualPlanReference(dto.message) && previouslyPresentedPlans?.length) {
+        return this.buildPlanClarificationResponse(dto, intent, agents, previouslyPresentedPlans);
+      }
+      if (/\b(?:plan|package|bundle)\b/i.test(dto.message)) {
+        return this.buildPlanClarificationResponse(
+          dto,
+          intent,
+          agents,
+          previouslyPresentedPlans ?? this.planService.getPlans(dto.customerId),
+        );
+      }
+    }
     const flowDecision = this.consultativeFlow?.handle(dto.customerId, dto.message);
     if (flowDecision) {
       return this.applyFlowDecision(dto, intent, agents, flowDecision);
+    }
+
+    const directTravelDestination = this.extractTravelDestination(dto.message);
+    if (
+      directTravelDestination &&
+      this.isTelecomRoamingRequest(dto.message) &&
+      /\b(?:roam(?:ing)?|travel|trip|abroad|international|package|plan)\b/i.test(dto.message) &&
+      (/\b(?:unlimited\s+data|\d+(?:\.\d+)?\s*(?:gb|gigs?|gigabytes?))\b/i.test(dto.message) ||
+        /\b\d[\d,]*\s*(?:(?:international|intl)\s*)?(?:call(?:ing)?\s*)?(?:minutes?|mins?)\b/i.test(dto.message))
+    ) {
+      const requirements = this.mergeTravelRequirements(
+        {
+          destination: directTravelDestination,
+          esimRequested: false,
+          companySponsored: false,
+          quotePending: false,
+          unlimitedDataRequested: false,
+        },
+        dto.message,
+      );
+      this.travelRequirementsByCustomer.set(dto.customerId, requirements);
+      if (this.hasUnverifiedTravelRequirements(dto.customerId, requirements)) {
+        return this.respondToTravelRequirements(dto, intent, agents, requirements);
+      }
     }
 
     if (this.isSimSecurityRequest(dto.message)) {
@@ -799,6 +1075,7 @@ export class OrchestratorService {
 
     if (this.isAvailablePlansRequest(dto.message) && !this.isDestinationTravelRequest(dto.message)) {
       const availablePlans = this.planService.getPlans(dto.customerId);
+      this.presentedPlansByCustomer.set(dto.customerId, availablePlans);
       const finalMessage = await this.llmProvider.generateResponse(
         { count: availablePlans.length },
         'Here are all {{count}} available plans: ',
@@ -818,6 +1095,7 @@ export class OrchestratorService {
 
     if (this.isRechargeOptionsRequest(dto.message) && !this.isDestinationTravelRequest(dto.message)) {
       const rechargeOptions = this.planService.getPlans(dto.customerId);
+      this.presentedPlansByCustomer.set(dto.customerId, rechargeOptions);
       const finalMessage = await this.llmProvider.generateResponse(
         { count: rechargeOptions.length },
         'Here are all {{count}} available recharge options:',
@@ -915,6 +1193,7 @@ export class OrchestratorService {
       profile,
       analytics,
       intelligence,
+      plans.find((plan) => plan.name === profile.plan)?.currency ?? 'USD',
     );
 
     // Keep ranked plans for context / fallback reference but don't use them as the offer.
@@ -961,6 +1240,383 @@ export class OrchestratorService {
           exclusiveOfferHint: intelligence.exclusiveOfferHint,
         },
       },
+    };
+  }
+
+  private clearPendingTravelQuote(customerId: string): void {
+    const requirements = this.travelRequirementsByCustomer.get(customerId);
+    if (requirements) requirements.quotePending = false;
+  }
+
+  private handleRechargeConcern(
+    dto: AskDto,
+    intent: string,
+    agents: string[],
+  ): OrchestratorResponse {
+    this.pendingSupportByCustomer.set(dto.customerId, {
+      category: 'recharge',
+      issue: 'Recharge/payment reconciliation requested: customer reports that a recharge failed, was debited, or was not credited. Verify payment-gateway result and service provisioning before advising another attempt.',
+      priority: 'medium',
+    });
+    const finalMessage =
+      'I can’t verify this specific payment or provisioning status in the demo. If money was deducted, don’t repeat the recharge until its status is checked, to avoid a duplicate. I can ask support to reconcile the payment and activation; I haven’t opened a ticket yet. Would you like me to? Please don’t share full card or bank details.';
+    this.appendConversationTurn(dto.customerId, { role: 'user', content: dto.message });
+    this.appendConversationTurn(dto.customerId, { role: 'assistant', content: finalMessage });
+    return {
+      intent: 'recharge_support',
+      agents: [...new Set([...agents, 'recharge', 'payment', 'support'])],
+      finalMessage,
+      stage: 'complete',
+      context: { paymentStatusVerified: false, ticketRequiresConfirmation: true },
+    };
+  }
+
+  private handleServiceExitRequest(
+    dto: AskDto,
+    intent: string,
+    agents: string[],
+  ): OrchestratorResponse {
+    this.pendingSupportByCustomer.set(dto.customerId, {
+      category: 'service-change',
+      issue: `Service change request: customer asked to cancel, disconnect, or port out. No plan, number, or account change has been made. An agent must verify the request and explain any applicable terms.`,
+      priority: 'medium',
+    });
+    const finalMessage =
+      'I understand. I won’t obstruct your choice or make a change without confirmation. Cancellation and number porting aren’t connected in this demo, but I can route your request to a support agent. Would you like me to open a request?';
+    this.appendConversationTurn(dto.customerId, { role: 'user', content: dto.message });
+    this.appendConversationTurn(dto.customerId, { role: 'assistant', content: finalMessage });
+    return {
+      intent: 'service_change_request',
+      agents: [...new Set([...agents, 'support'])],
+      finalMessage,
+      stage: 'complete',
+      context: { serviceChangePerformed: false, ticketRequiresConfirmation: true },
+    };
+  }
+
+  private handleNetworkCare(
+    dto: AskDto,
+    intent: string,
+    agents: string[],
+    existingCase?: NetworkCareCase,
+  ): OrchestratorResponse {
+    const message = dto.message;
+    const symptom = /\b(?:poor\s+signal|weak\s+signal|poor\s+reception)\b/i.test(message)
+      ? 'weak-signal'
+      : /\b(?:no\s+(?:mobile\s+)?service|no\s+signal)\b/i.test(message)
+        ? 'no-service'
+        : /\b(?:dropped\s+calls?|calls?\s+(?:keep|keeps)\s+dropping)\b/i.test(message)
+          ? 'dropped-calls'
+          : /\b(?:slow\s+(?:mobile\s+)?(?:data|internet|connection)|(?:mobile\s+)?(?:data|internet|connection)\s+(?:is\s+)?slow)\b/i.test(message)
+            ? 'slow-data'
+            : 'mobile-data';
+    const networkCase =
+      existingCase ?? { symptom, diagnosticsTried: false, awaiting: 'location' as const };
+    const location = this.extractNetworkLocation(message, networkCase.awaiting === 'location');
+    if (location) networkCase.location = location;
+
+    const hasNotTried = /\b(?:not|never|haven.t|have\s+not)\s+(?:yet\s+)?tried\b/i.test(message);
+    const triedDiagnostics =
+      !hasNotTried &&
+      /\b(?:already|tried|restart(?:ed)?|reboot(?:ed)?|airplane\s+mode|reset\s+(?:the\s+)?network)\b/i.test(
+        message,
+      );
+    if (triedDiagnostics) networkCase.diagnosticsTried = true;
+
+    const persists =
+      /\b(?:still|continues?|keeps?|not\s+(?:fixed|working)|no\s+improvement|same\s+issue)\b/i.test(
+        message,
+      );
+    const resolved =
+      /\b(?:fixed|working\s+now|back\s+to\s+normal|resolved|sorted|no\s+longer)\b/i.test(
+        message,
+      );
+
+    if (networkCase.awaiting === 'location' && !networkCase.location) {
+      this.networkCareByCustomer.set(dto.customerId, networkCase);
+      return this.buildNetworkCareReply(
+        dto,
+        intent,
+        agents,
+        'I’m sorry you’re dealing with that. I don’t have a live Airtel/Jio outage feed connected, so I can’t confirm a local outage. I can guide you through safe checks and prepare a support case if needed. Which city or PIN code is affected? Please don’t share a full street address.',
+        networkCase,
+      );
+    }
+
+    if (networkCase.awaiting === 'location') {
+      if (networkCase.diagnosticsTried && persists) {
+        return this.requestNetworkEscalation(dto, intent, agents, networkCase);
+      }
+      networkCase.awaiting = 'diagnostics';
+      this.networkCareByCustomer.set(dto.customerId, networkCase);
+      if (networkCase.diagnosticsTried) {
+        networkCase.awaiting = 'result';
+        return this.buildNetworkCareReply(
+          dto,
+          intent,
+          agents,
+          'You’ve already tried the basic reconnect steps. Is the problem still happening?',
+          networkCase,
+        );
+      }
+      return this.buildNetworkCareReply(
+        dto,
+        intent,
+        agents,
+        this.getNetworkDiagnosticSteps(networkCase.symptom),
+        networkCase,
+      );
+    }
+
+    if (networkCase.awaiting === 'diagnostics') {
+      if (networkCase.diagnosticsTried && persists) {
+        return this.requestNetworkEscalation(dto, intent, agents, networkCase);
+      }
+      if (networkCase.diagnosticsTried || this.isAffirmativeReply(message)) {
+        networkCase.diagnosticsTried = true;
+        networkCase.awaiting = 'result';
+        this.networkCareByCustomer.set(dto.customerId, networkCase);
+        return this.buildNetworkCareReply(
+          dto,
+          intent,
+          agents,
+          'Thanks for checking. Is the connection still failing after those steps?',
+          networkCase,
+        );
+      }
+
+      if (this.isNegativeReply(message)) {
+        networkCase.awaiting = 'result';
+        this.networkCareByCustomer.set(dto.customerId, networkCase);
+        return this.buildNetworkCareReply(
+          dto,
+          intent,
+          agents,
+          `${this.getNetworkDiagnosticInstructions(networkCase.symptom)} After trying those steps, tell me whether the service is working again.`,
+          networkCase,
+        );
+      }
+
+      networkCase.awaiting = 'result';
+      this.networkCareByCustomer.set(dto.customerId, networkCase);
+      return this.buildNetworkCareReply(
+        dto,
+        intent,
+        agents,
+        `${this.getNetworkDiagnosticInstructions(networkCase.symptom)} After trying those steps, tell me whether the service is working again.`,
+        networkCase,
+      );
+    }
+
+    if (networkCase.diagnosticsTried && (resolved || (this.isNegativeReply(message) && !persists))) {
+      this.networkCareByCustomer.delete(dto.customerId);
+      return this.buildNetworkCareReply(
+        dto,
+        intent,
+        agents,
+        'Glad it’s working again. I haven’t opened a support ticket. If the problem returns, tell me the affected area and symptom and I’ll pick up from there.',
+        networkCase,
+      );
+    }
+
+    if (
+      (networkCase.diagnosticsTried && (persists || this.isAffirmativeReply(message))) ||
+      (!networkCase.diagnosticsTried &&
+        (persists || (this.isNegativeReply(message) && !resolved)))
+    ) {
+      networkCase.diagnosticsTried = true;
+      return this.requestNetworkEscalation(dto, intent, agents, networkCase);
+    }
+
+    if (resolved || this.isAffirmativeReply(message)) {
+      this.networkCareByCustomer.delete(dto.customerId);
+      return this.buildNetworkCareReply(
+        dto,
+        intent,
+        agents,
+        'Glad it’s working again. I haven’t opened a support ticket. If the problem returns, tell me the affected area and symptom and I’ll pick up from there.',
+        networkCase,
+      );
+    }
+
+    this.networkCareByCustomer.set(dto.customerId, networkCase);
+    return this.buildNetworkCareReply(
+      dto,
+      intent,
+      agents,
+      'Is the network problem still happening after the checks?',
+      networkCase,
+    );
+  }
+
+  private extractNetworkLocation(message: string, allowShortAnswer: boolean): string | undefined {
+    const match = message.match(
+      /\b(?:in|at|near|around)\s+([a-z0-9][a-z0-9\s-]{1,39}?)(?=\s+(?:for|and|with|but|where|when|please|the|my|after)\b|[,.;!?]|$)/i,
+    );
+    const location = match?.[1]?.trim();
+    if (location) return location.slice(0, 50);
+
+    if (!allowShortAnswer || this.isAffirmativeReply(message) || this.isNegativeReply(message)) {
+      return undefined;
+    }
+
+    const candidate = message.trim().replace(/[,.!?]+$/, '');
+    if (
+      this.isNetworkIssueRequest(candidate) ||
+      candidate.split(/\s+/).length > 3 ||
+      /\b(?:i|my|have|no|poor|weak|signal|service|internet|mobile|data|calls?|plan|bill|recharge|roaming|payment)\b/i.test(
+        candidate,
+      )
+    ) {
+      return undefined;
+    }
+    return candidate.slice(0, 50);
+  }
+
+  private getNetworkDiagnosticSteps(
+    symptom: NetworkCareCase['symptom'],
+  ): string {
+    return `${this.getNetworkDiagnosticInstructions(symptom)} These steps won’t confirm an outage, since I don’t have live network telemetry here. Have you already tried them?`;
+  }
+
+  private getNetworkDiagnosticInstructions(
+    symptom: NetworkCareCase['symptom'],
+  ): string {
+    const steps =
+      symptom === 'slow-data'
+        ? 'Try toggling Airplane Mode on for 15 seconds and off, then check mobile data with Wi-Fi turned off. If you use a VPN or Data Saver, briefly check whether it is limiting the connection.'
+        : symptom === 'dropped-calls'
+          ? 'Restart the phone, then try a call from a different nearby spot. If your device supports VoLTE/4G Calling, check that it is enabled.'
+          : symptom === 'weak-signal'
+            ? 'Compare reception in an open area and another nearby location, since indoor coverage can vary. Toggle Airplane Mode on for 15 seconds and off, then check whether the signal improves.'
+          : symptom === 'no-service'
+            ? 'Check that Airplane Mode is off, toggle it on for 15 seconds and off, then restart the phone.'
+            : 'Check that Mobile Data is enabled, toggle Airplane Mode on for 15 seconds and off, then restart the phone.';
+    return steps;
+  }
+
+  private buildNetworkCareReply(
+    dto: AskDto,
+    intent: string,
+    agents: string[],
+    finalMessage: string,
+    networkCase: NetworkCareCase,
+  ): OrchestratorResponse {
+    this.appendConversationTurn(dto.customerId, { role: 'user', content: dto.message });
+    this.appendConversationTurn(dto.customerId, { role: 'assistant', content: finalMessage });
+    return {
+      intent: 'network_support',
+      agents: [...new Set([...agents, 'support'])],
+      finalMessage,
+      stage: 'complete',
+      context: {
+        networkIssue: networkCase.symptom,
+        approximateLocation: networkCase.location,
+        diagnosticsTried: networkCase.diagnosticsTried,
+      },
+    };
+  }
+
+  private requestNetworkEscalation(
+    dto: AskDto,
+    intent: string,
+    agents: string[],
+    networkCase: NetworkCareCase,
+  ): OrchestratorResponse {
+    const location = networkCase.location ? ` near ${networkCase.location}` : '';
+    const steps = networkCase.diagnosticsTried ? ' Basic reconnect/restart steps were tried.' : '';
+    const priority = networkCase.symptom === 'no-service' ? 'high' : 'medium';
+    this.pendingSupportByCustomer.set(dto.customerId, {
+      category: 'network',
+      issue: `Network support request: ${networkCase.symptom.replace(/-/g, ' ')}${location}.${steps} Live outage status was not verified; investigate network telemetry and coverage.`,
+      priority,
+    });
+    this.networkCareByCustomer.delete(dto.customerId);
+    return this.buildNetworkCareReply(
+      dto,
+      intent,
+      agents,
+      'Since it is still happening, I can send these details to a support agent to check coverage and network telemetry. I haven’t opened a ticket yet. Would you like me to open one?',
+      networkCase,
+    );
+  }
+
+  private handleBillingConcern(
+    dto: AskDto,
+    intent: string,
+    agents: string[],
+  ): OrchestratorResponse {
+    const records = this.billingService
+      .getBillingHistory(dto.customerId)
+      .slice()
+      .sort((left, right) => new Date(right.date).getTime() - new Date(left.date).getTime());
+    const recent = records.slice(0, 2);
+    const latest = recent[0];
+    const previous = recent[1];
+    let comparison = 'I can’t compare it because there is no statement history on this account.';
+    if (latest && previous) {
+      const difference = latest.amount - previous.amount;
+      comparison =
+        difference > 0
+          ? `The latest recorded bill is ${formatCurrencyAmount(latest.amount, 'USD')}, up ${formatCurrencyAmount(difference, 'USD')} from the previous ${formatCurrencyAmount(previous.amount, 'USD')}.`
+          : difference < 0
+            ? `The latest recorded bill is ${formatCurrencyAmount(latest.amount, 'USD')}, down ${formatCurrencyAmount(Math.abs(difference), 'USD')} from the previous ${formatCurrencyAmount(previous.amount, 'USD')}.`
+            : `The latest and previous recorded bills are both ${formatCurrencyAmount(latest.amount, 'USD')}; this account history doesn’t show an increase.`;
+    } else if (latest) {
+      comparison = `The latest recorded bill is ${formatCurrencyAmount(latest.amount, 'USD')}, but there isn’t an earlier bill here to compare.`;
+    }
+
+    const itemization =
+      'The demo statement records don’t include itemized usage or fee details, so I can’t attribute the amount to roaming, overages, or add-ons.';
+    this.pendingSupportByCustomer.set(dto.customerId, {
+      category: 'billing',
+      issue: `Billing investigation requested: customer reports an unexpectedly high bill. Latest recorded amount: ${latest ? formatCurrencyAmount(latest.amount, 'USD') : 'not available'}; prior recorded amount: ${previous ? formatCurrencyAmount(previous.amount, 'USD') : 'not available'}. Review itemized charges with the customer.`,
+      priority: /\b(?:unauthori[sz]ed|charged\s+twice|fraud|unknown\s+charge)\b/i.test(dto.message)
+        ? 'high'
+        : 'medium',
+    });
+    const finalMessage = `${comparison} ${itemization} I can ask a support agent to investigate the itemized statement. I haven’t opened a ticket yet. Would you like me to?`;
+    this.appendConversationTurn(dto.customerId, { role: 'user', content: dto.message });
+    this.appendConversationTurn(dto.customerId, { role: 'assistant', content: finalMessage });
+    return {
+      intent: 'billing_dispute',
+      agents: [...new Set([...agents, 'billing', 'support'])],
+      finalMessage,
+      stage: 'billing',
+      billingHistory: recent,
+      context: { billingComparison: { latest, previous } },
+    };
+  }
+
+  private openPendingSupportTicket(
+    dto: AskDto,
+    intent: string,
+    agents: string[],
+    request: PendingSupportRequest,
+  ): OrchestratorResponse {
+    if (!this.supportService) {
+      const finalMessage =
+        'The support service is unavailable right now, so I haven’t opened a ticket. Please try again later.';
+      this.appendConversationTurn(dto.customerId, { role: 'user', content: dto.message });
+      this.appendConversationTurn(dto.customerId, { role: 'assistant', content: finalMessage });
+      return { intent, agents, finalMessage, stage: 'complete' };
+    }
+
+    const ticket = this.supportService.createTicket(
+      dto.customerId,
+      request.issue,
+      request.priority,
+    );
+    this.pendingSupportByCustomer.delete(dto.customerId);
+    const finalMessage = `I’ve opened a ${request.category} support request (reference ${ticket.id}). A support agent can review the details; I haven’t claimed the issue is resolved.`;
+    this.appendConversationTurn(dto.customerId, { role: 'user', content: dto.message });
+    this.appendConversationTurn(dto.customerId, { role: 'assistant', content: finalMessage });
+    return {
+      intent: 'support_request',
+      agents: [...new Set([...agents, 'support'])],
+      finalMessage,
+      stage: 'complete',
+      context: { supportTicket: ticket },
     };
   }
 
@@ -1075,6 +1731,24 @@ export class OrchestratorService {
     dto: AskDto,
     decision: Extract<FlowDecision, { kind: 'travel_offer' }>,
   ): Promise<OrchestratorResponse> {
+    const requirements = this.mergeTravelRequirements(
+      {
+        destination: decision.destination,
+        days: decision.days,
+        dataGB: decision.dataGB,
+        unlimitedDataRequested: false,
+        esimRequested: false,
+        companySponsored: false,
+        quotePending: false,
+      },
+      dto.message,
+    );
+    this.travelRequirementsByCustomer.set(dto.customerId, requirements);
+
+    if (this.hasUnverifiedTravelRequirements(dto.customerId, requirements)) {
+      return this.respondToTravelRequirements(dto, 'TELECOM_ROAMING', ['roaming', 'profile', 'analytics', 'plan'], requirements);
+    }
+
     const profile = this.profileService.getProfile(dto.customerId);
     const analytics = this.analyticsService.getAnalytics(dto.customerId);
     const intelligence = this.customerIntelligenceService.analyzeCustomer(
@@ -1084,8 +1758,16 @@ export class OrchestratorService {
     );
 
     const base = decision.composeMessage;
+    const accountCurrency =
+      this.planService.getPlans(dto.customerId).find((plan) => plan.name === profile.plan)?.currency ?? 'USD';
     const compose = (extra: string): Promise<CustomPlan> =>
-      this.customPlanComposerService.compose(`${base} ${extra}`.trim(), profile, analytics, intelligence);
+      this.customPlanComposerService.compose(
+        `${base} ${extra}`.trim(),
+        profile,
+        analytics,
+        intelligence,
+        accountCurrency,
+      );
     const heavyData = (decision.dataGB ?? 0) >= 25;
     const [essential, balanced, premium] = await Promise.all([
       compose(''),
@@ -1129,9 +1811,233 @@ export class OrchestratorService {
         analytics,
         customPlan: balanced,
         planOptions: { essential, balanced, premium },
-        travel: { destination: decision.destination, days: decision.days, purpose: decision.purpose, dataGB: decision.dataGB },
+        travel: {
+          destination: decision.destination,
+          days: decision.days,
+          purpose: decision.purpose,
+          dataGB: decision.dataGB,
+        },
+        travelRequirements: requirements,
       },
     };
+  }
+
+  private mergeTravelRequirements(
+    requirements: TravelPlanRequirements,
+    message: string,
+  ): TravelPlanRequirements {
+    const dataMatch = message.match(
+      /\b(\d+(?:\.\d+)?)\s*(?:gb|gigs?|gigabytes?)\b/i,
+    );
+    const durationMatch = message.match(/\b(\d+)\s*(?:days?|nights?)\b/i);
+    const minutesMatch = message.match(
+      /\b(\d[\d,]*)\s*(?:(?:international|intl)\s*)?(?:call(?:ing)?\s*)?(?:minutes?|mins?)\b/i,
+    );
+    const destinationMatch = message.match(
+      /\b(?:calls?|calling(?:\s+minutes?)?)\s+to\s+([a-z][a-z\s-]{1,30})/i,
+    );
+    const callDestination = destinationMatch?.[1]
+      ?.replace(/\b(?:and|with|for|please|as|because)\b.*$/i, '')
+      .trim();
+
+    if (dataMatch) requirements.dataGB = Number(dataMatch[1]);
+    if (/\bunlimited\s+data\b/i.test(message)) requirements.unlimitedDataRequested = true;
+    if (durationMatch) requirements.days = Number(durationMatch[1]);
+    if (minutesMatch) {
+      requirements.internationalMinutes = Number(
+        minutesMatch[1].replace(/,/g, ''),
+      );
+    }
+    if (callDestination) requirements.internationalCallDestination = callDestination;
+    if (/\be[\s-]?sim\b/i.test(message)) requirements.esimRequested = true;
+    if (
+      /\b(?:company|employer|corporate|business)\b.{0,40}\b(?:pay|sponsor|cover|billing|account)|\b(?:pay|sponsor|cover).{0,40}\b(?:company|employer|corporate|business)\b/i.test(
+        message,
+      )
+    ) {
+      requirements.companySponsored = true;
+    }
+
+    return requirements;
+  }
+
+  private isTravelRequirementsFollowUp(message: string): boolean {
+    return /\b(?:roam(?:ing)?|e[\s-]?sim|company|employer|corporate|sponsor(?:ed|ship)?|(?:\d+(?:\.\d+)?)\s*(?:gb|gigs?|gigabytes?|minutes?|mins?)|international calls?)\b/i.test(
+      message,
+    );
+  }
+
+  private extractTravelDestination(message: string): string | undefined {
+    const match = message.match(
+      /\b(?:in|to|for)\s+(?:the\s+)?([a-z]+(?:\s+[a-z]+){0,2}?)(?=\s+(?:for|with|and|need|want|please|while|company|e[\s-]?sim)\b|[,.!?]|$)/i,
+    );
+    return match?.[1]?.trim().toLowerCase();
+  }
+
+  private hasUnverifiedTravelRequirements(
+    customerId: string,
+    requirements: TravelPlanRequirements,
+  ): boolean {
+    if (
+      requirements.dataGB === undefined &&
+      !requirements.unlimitedDataRequested &&
+      requirements.internationalMinutes === undefined
+    ) {
+      return false;
+    }
+
+    const normalize = (value: string) => value.toLowerCase().replace(/[^a-z]/g, '');
+    const destination = normalize(requirements.destination);
+    return !this.roamingService
+      .getRoamingPackages(customerId)
+      .some((roamingPackage) => {
+        const coversDestination = roamingPackage.countries.some(
+          (country) => normalize(country) === destination,
+        );
+        const coversDuration =
+          requirements.days === undefined ||
+          roamingPackage.days >= requirements.days;
+        const coversData =
+          !requirements.unlimitedDataRequested &&
+          (requirements.dataGB === undefined ||
+            roamingPackage.dataGB >= requirements.dataGB);
+        // RoamingPackage has no international-minutes allowance, so it cannot verify that constraint.
+        const coversCalls = requirements.internationalMinutes === undefined;
+        return coversDestination && coversDuration && coversData && coversCalls;
+      });
+  }
+
+  private respondToTravelRequirements(
+    dto: AskDto,
+    intent: string,
+    agents: string[],
+    requirements: TravelPlanRequirements,
+  ): OrchestratorResponse {
+    const profile = this.profileService.getProfile(dto.customerId);
+    const destinationName = requirements.destination.replace(
+      /\b[a-z]/g,
+      (letter) => letter.toUpperCase(),
+    );
+    const stay = requirements.days ? ` for ${requirements.days} days` : '';
+    const data = requirements.unlimitedDataRequested
+      ? 'unlimited data'
+      : requirements.dataGB !== undefined
+        ? `${requirements.dataGB}GB data`
+        : undefined;
+    const calls =
+      requirements.internationalMinutes !== undefined
+        ? `${requirements.internationalMinutes} international calling minutes${requirements.internationalCallDestination ? ` to ${requirements.internationalCallDestination}` : ''}`
+        : undefined;
+    const needs = [data, calls].filter(Boolean).join(' and ');
+    const esim = requirements.esimRequested
+      ? ' The eSIM service in this demo supports activation and status only; it has no destination-specific eSIM offers or device-compatibility catalog.'
+      : '';
+    const sponsorship = requirements.companySponsored
+      ? ' Company-sponsored billing is not configured in this demo.'
+      : '';
+    const matchingDestinationPackages = this.roamingService
+      .getRoamingPackages(dto.customerId)
+      .filter((roamingPackage) =>
+        roamingPackage.countries.some(
+          (country) =>
+            country.toLowerCase().replace(/[^a-z]/g, '') ===
+            requirements.destination.toLowerCase().replace(/[^a-z]/g, ''),
+        ),
+      );
+    const catalogStatus = matchingDestinationPackages.length
+      ? `The catalog does list roaming packages for ${destinationName}, but none verifies every requested data, duration, and calling requirement.`
+      : `The catalog lists no roaming package for ${destinationName}.`;
+    const finalMessage =
+      `${profile.name.split(' ')[0]}, I’ve kept your requirements together: ${destinationName}${stay}${needs ? `, ${needs}` : ''}` +
+      `${requirements.esimRequested ? ', eSIM' : ''}${requirements.companySponsored ? ', paid by your company' : ''}. ` +
+      `I can’t verify a roaming package in this account’s catalog that meets them. ${catalogStatus}` +
+      `${requirements.internationalMinutes !== undefined ? ' Package details also do not specify international calling minutes.' : ''}` +
+      `${esim}${sponsorship} I won’t present a smaller data pack as if it covered your full request. Would you like me to open a sales quote request for these requirements?`;
+
+    requirements.quotePending = true;
+    this.appendConversationTurn(dto.customerId, {
+      role: 'user',
+      content: dto.message,
+    });
+    this.appendConversationTurn(dto.customerId, {
+      role: 'assistant',
+      content: finalMessage,
+    });
+
+    return {
+      intent: 'TELECOM_ROAMING',
+      agents: [...new Set([...agents, 'roaming', 'support'])],
+      finalMessage,
+      stage: 'complete',
+      context: {
+        travelRequirements: requirements,
+        quoteRequestRequiresConfirmation: true,
+      },
+    };
+  }
+
+  private createTravelQuoteRequest(
+    dto: AskDto,
+    intent: string,
+    agents: string[],
+    requirements: TravelPlanRequirements,
+  ): OrchestratorResponse {
+    if (!this.supportService) {
+      const finalMessage =
+        'I can’t submit the sales quote request right now because the support service is unavailable. Your requirements are still in this conversation; please try again later.';
+      this.appendConversationTurn(dto.customerId, {
+        role: 'user',
+        content: dto.message,
+      });
+      this.appendConversationTurn(dto.customerId, {
+        role: 'assistant',
+        content: finalMessage,
+      });
+      return {
+        intent,
+        agents: [...new Set([...agents, 'support'])],
+        finalMessage,
+        stage: 'complete',
+      };
+    }
+
+    const ticket = this.supportService.createTicket(
+      dto.customerId,
+      `Enterprise quote request: ${requirements.destination.replace(/\b[a-z]/g, (letter) => letter.toUpperCase())}, ${requirements.days ?? 'unspecified'} days, ${requirements.unlimitedDataRequested ? 'unlimited' : `${requirements.dataGB ?? 'unspecified'}GB`} data, ${requirements.internationalMinutes ?? 'unspecified'} international minutes${requirements.internationalCallDestination ? ` to ${requirements.internationalCallDestination}` : ''}; eSIM ${requirements.esimRequested ? 'requested' : 'not requested'}; company-sponsored billing ${requirements.companySponsored ? 'requested' : 'not requested'}. Verify destination coverage, capacity, eSIM compatibility, and billing.`,
+      'medium',
+    );
+    requirements.quotePending = false;
+    const destinationName = requirements.destination.replace(/\b[a-z]/g, (letter) => letter.toUpperCase());
+    const finalMessage =
+      `I’ve opened a sales quote request with your full requirements (reference ${ticket.id}). ` +
+      `The team will need to verify ${destinationName} coverage` +
+      `${requirements.unlimitedDataRequested ? ', the requested unlimited data' : requirements.dataGB !== undefined ? `, the ${requirements.dataGB}GB data allowance` : ''}` +
+      `${requirements.internationalMinutes !== undefined ? ', international minutes' : ''}` +
+      `${requirements.esimRequested ? ', eSIM compatibility' : ''}` +
+      `${requirements.companySponsored ? ', and company billing' : ''} before quoting.`;
+    this.appendConversationTurn(dto.customerId, {
+      role: 'user',
+      content: dto.message,
+    });
+    this.appendConversationTurn(dto.customerId, {
+      role: 'assistant',
+      content: finalMessage,
+    });
+    return {
+      intent: 'TELECOM_ROAMING',
+      agents: [...new Set([...agents, 'support'])],
+      finalMessage,
+      stage: 'complete',
+      context: { travelRequirements: requirements, supportTicket: ticket },
+    };
+  }
+
+  private isAffirmativeReply(message: string): boolean {
+    return /^\s*(?:yes(?:,?\s+please)?|yeah|yep|sure|please do|go ahead|do that|that would be great)\b[.! ]*$/i.test(message);
+  }
+
+  private isNegativeReply(message: string): boolean {
+    return /^\s*(?:no|not now|cancel|don't|do not)\b/i.test(message);
   }
 
   private async handleEsimStatus(

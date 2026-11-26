@@ -44,6 +44,10 @@ and payment flow end-to-end.
   asks an internal `RecommendationService` to rank plans against the
   customer's usage, generates a natural-language rationale, and then drives
   a stateful (but request-driven) conversation through payment and recharge.
+- **Customer-care journeys** — the assistant can triage common network
+  problems with safe self-checks, compare recorded bills without inventing
+  line items, preserve travel requirements across turns, and request explicit
+  consent before creating a support ticket.
 - **Roaming prices** — recommendations convert the INR catalog into the
   recognized destination country's currency, including component prices and
   discounts, using dated exchange rates.
@@ -62,6 +66,73 @@ and payment flow end-to-end.
   hardcoded mock data on the frontend), with loading/error/empty states.
 - `useAuth()` (JWT stored in `localStorage`) and a generic `useApi<T>()` data
   hook power all pages.
+
+## Provider value and demo scenarios
+
+This prototype is intended to demonstrate an AI service layer that can resolve
+routine customer-care work, guide customers to suitable offers, and hand off
+cases with useful context instead of making them repeat the problem. A
+provider such as Airtel or Jio could evaluate it as a digital-care,
+agent-assist, and responsible offer-discovery layer—not as a replacement for
+the provider's billing, network, CRM, or provisioning systems.
+
+| Customer query | Agent behavior in this prototype | Safe boundary |
+| --- | --- | --- |
+| “How much data do I have left?” | Uses the customer's analytics record and suggests a relevant next step. | Reports the demo account data only. |
+| “My bill is higher than expected.” | Compares the two latest recorded bills and offers an investigation ticket. | Does not invent charge breakdowns; asks before creating the ticket. |
+| “My mobile data is slow in Pune.” | Gives low-risk reconnect checks, captures an approximate area, then offers a network support handoff if the issue persists. | No live Airtel/Jio outage or radio telemetry is connected, so it never claims an outage was checked. |
+| “I lost my phone.” | Guides the customer through SIM security and replacement support. | Sensitive account actions require the existing confirmation flow. |
+| “I need an eSIM.” | Checks eSIM status and guides activation in the demo. | Device compatibility, eSIM inventory, and carrier provisioning need provider integrations. |
+| “I’m travelling; I need 500GB and an eSIM.” | Carries constraints across turns and checks the roaming catalog before recommending. | Does not label a smaller pack as a match; asks before opening a quote request. |
+| “Find a plan that costs less.” | Uses profile and usage context to tailor a plan recommendation. | Activation and payment remain explicit customer actions. |
+| “My recharge was deducted but service did not update.” | Warns against retrying blindly and offers a payment/provisioning investigation ticket. | Does not claim payment or activation succeeded; asks before creating the ticket. |
+| “I want to cancel or port my number out.” | Acknowledges the request and offers a human service-change handoff. | Does not obstruct, apply a retention offer automatically, or claim a cancellation/port-out was completed. |
+
+### Why a provider might buy
+
+- **Lower avoidable care cost:** resolve routine usage, bill-history, plan,
+  roaming, and basic connectivity questions in digital channels.
+- **Better agent productivity:** pass a consented, structured case summary
+  (symptom, location, checks tried, or bill comparison) into human support.
+- **More relevant conversion:** recommend only catalog-backed upgrades or
+  add-ons that fit the customer's stated needs, with no silent activation.
+- **Retention and customer experience:** recognize repeated problems, provide
+  a clear next action, and avoid restarting qualification on every turn.
+- **Measurable rollout:** start with a narrow set of intents, compare against
+  a control group, and expand only when quality and economics improve.
+
+### Pilot economics and success measures
+
+Do not assume a generic “AI saves X%” claim. Establish each provider's baseline
+and calculate monthly value using its own costs and conversion margins:
+
+```text
+monthly benefit =
+  deflected eligible contacts × avoidable cost per contact
+  + agent-assisted contacts × minutes saved × cost per agent minute
+  + incremental conversions × contribution margin
+  + retained customers × expected contribution margin
+
+monthly net value = monthly benefit - platform, integration, inference,
+                    and governance costs
+```
+
+Track containment and first-contact resolution alongside repeat contact rate,
+CSAT, human-transfer rate, average handling time, plan conversion, cost per
+resolution, and factual-error/unauthorized-action rate. Treat customer consent,
+safe escalation, and factual accuracy as launch gates—not trade-offs against
+conversion.
+
+### What is needed before production
+
+The included data and workflows are in-memory demo fixtures. A provider pilot
+needs authenticated APIs for customer identity and consent, current offers and
+eligibility, bill line items, payment and recharge status, eSIM inventory and
+device compatibility, network incidents/coverage, CRM case creation, audit
+events, retention policy, and provider-specific security controls. Until an
+integration exists, the assistant must state that it cannot verify that data;
+the prototype intentionally avoids presenting mock capability as a live
+provider action.
 
 ## Orchestration sequence
 

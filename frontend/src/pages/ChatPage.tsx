@@ -12,6 +12,7 @@ import { useAuth } from '../hooks/useAuth';
 import { useChat } from '../hooks/useChat';
 import { api } from '../services/api';
 import { buildBillEmailUrl } from '../services/billEmail';
+import { formatCurrency } from '../services/currency';
 import type { CurrencyCode } from '../services/currency';
 import type { ChatMessage } from '../hooks/useChat';
 import type { AgentCommunicationTrace, OrchestratorResponse } from '../services/types';
@@ -20,6 +21,8 @@ import styles from './ChatPage.module.css';
 const NON_TELECOM_BANNER_TEXT = 'I am not available for this service.';
 const MAX_FLOW_TRACES = 5;
 const FLOW_CLEAR_MARKER_PREFIX = 'telecom-ai-flow-clear-marker';
+const VOICE_IDLE_REMINDER_MS = 60_000;
+const VOICE_IDLE_DISCONNECT_MS = 20_000;
 const FLOW_NODE_COLOR_CLASSES = [
   'flowBlockMint',
   'flowBlockSky',
@@ -318,6 +321,11 @@ export function ChatPage() {
   const realtimeSessionGenerationRef = useRef(0);
   const pendingTranscriptSegmentsRef = useRef<string[]>([]);
   const transcriptFlushTimeoutRef = useRef<number | null>(null);
+  const voiceIdleTimerRef = useRef<number | null>(null);
+  const voiceDisconnectTimerRef = useRef<number | null>(null);
+  const voiceReminderSentRef = useRef(false);
+  const latestVoiceTranscriptRef = useRef('');
+  const voiceRecommendedPlanRef = useRef<{ id: string; name: string } | null>(null);
 
   useEffect(() => {
     threadRef.current?.scrollTo({ top: threadRef.current.scrollHeight, behavior: 'smooth' });
@@ -630,6 +638,14 @@ export function ChatPage() {
 
   const stopRealtimeVoice = () => {
     realtimeSessionGenerationRef.current += 1;
+    if (voiceIdleTimerRef.current !== null) {
+      window.clearTimeout(voiceIdleTimerRef.current);
+      voiceIdleTimerRef.current = null;
+    }
+    if (voiceDisconnectTimerRef.current !== null) {
+      window.clearTimeout(voiceDisconnectTimerRef.current);
+      voiceDisconnectTimerRef.current = null;
+    }
     if (transcriptFlushTimeoutRef.current !== null) {
       window.clearTimeout(transcriptFlushTimeoutRef.current);
       transcriptFlushTimeoutRef.current = null;
@@ -648,8 +664,53 @@ export function ChatPage() {
     handledTranscriptItemsRef.current.clear();
     handledAssistantItemsRef.current.clear();
     pendingTranscriptSegmentsRef.current = [];
+    voiceReminderSentRef.current = false;
+    latestVoiceTranscriptRef.current = '';
+    voiceRecommendedPlanRef.current = null;
     setVoiceMode(false);
     setListening(false);
+  };
+
+  const scheduleVoiceIdleReminder = (channel: RTCDataChannel, sessionGeneration: number) => {
+    if (voiceReminderSentRef.current) return;
+    if (voiceIdleTimerRef.current !== null) {
+      window.clearTimeout(voiceIdleTimerRef.current);
+      voiceIdleTimerRef.current = null;
+    }
+
+    voiceIdleTimerRef.current = window.setTimeout(() => {
+      voiceIdleTimerRef.current = null;
+      if (
+        sessionGeneration !== realtimeSessionGenerationRef.current ||
+        channel.readyState !== 'open'
+      ) {
+        return;
+      }
+
+      voiceReminderSentRef.current = true;
+      channel.send(
+        JSON.stringify({
+          type: 'response.create',
+          response: {
+            instructions:
+              'The customer has been quiet. Give one brief, warm reminder that you are still listening and ask what telecom help they need. Do not repeat the last offer or take any account action.',
+          },
+        }),
+      );
+      voiceDisconnectTimerRef.current = window.setTimeout(() => {
+        voiceDisconnectTimerRef.current = null;
+        if (sessionGeneration !== realtimeSessionGenerationRef.current) return;
+        stopRealtimeVoice();
+        setMessages((prev) => [
+          ...prev,
+          {
+            id: crypto.randomUUID(),
+            role: 'assistant',
+            text: 'I paused the live voice session after the quiet spell. Tap the microphone whenever you are ready to continue.',
+          },
+        ]);
+      }, VOICE_IDLE_DISCONNECT_MS);
+    }, VOICE_IDLE_REMINDER_MS);
   };
 
   const executeRealtimeTool = async (
@@ -662,6 +723,13 @@ export function ChatPage() {
       const response = await api.ask(query, customerId, 'ask');
       if (sessionGeneration === realtimeSessionGenerationRef.current) {
         pendingVoiceResponseRef.current = response;
+        voiceRecommendedPlanRef.current =
+          response.stage === 'recommendation' && response.recommendation
+            ? {
+                id: response.recommendation.plan.id,
+                name: response.recommendation.plan.name,
+              }
+            : null;
       }
       return {
         stage: response.stage,
@@ -680,14 +748,33 @@ export function ChatPage() {
       const planId = typeof args.plan_id === 'string' ? args.plan_id : '';
       if (!planId) return { error: 'A plan ID is required before preparing activation.' };
 
+      const recommendedPlan = voiceRecommendedPlanRef.current;
+      const latestUtterance = latestVoiceTranscriptRef.current;
+      const explicitActivation =
+        /\b(?:activate|start|purchase|buy|subscribe|sign me up|go ahead|proceed|take|activar|activa|comprar|contratar)\b|(?:एक्टिवेट|सक्रिय|चालू|সক্রিয়|চালু|ಸಕ್ರಿಯ|செயல்படுத்து|యాక్టివేట్|സജീവമാക്ക)/iu.test(
+          latestUtterance,
+        ) &&
+        (latestUtterance.toLowerCase().includes(recommendedPlan?.name.toLowerCase() ?? '\u0000') ||
+          /\b(?:this|that|the)\s+plan\b|\bit\b/i.test(latestUtterance));
+
+      if (!recommendedPlan || planId !== recommendedPlan.id || !explicitActivation) {
+        latestVoiceTranscriptRef.current = '';
+        return {
+          status: 'not_started',
+          message: `No payment or activation has been started. To continue, say “activate ${recommendedPlan?.name ?? 'this plan'}” or choose the activation button.`,
+        };
+      }
+
+      latestVoiceTranscriptRef.current = '';
       const response = await api.ask(
-        'Yes, please proceed with this plan.',
+        latestUtterance,
         customerId,
         'confirm',
         planId,
       );
       if (sessionGeneration === realtimeSessionGenerationRef.current) {
         pendingVoiceResponseRef.current = response;
+        voiceRecommendedPlanRef.current = null;
       }
       return {
         stage: response.stage,
@@ -809,7 +896,13 @@ export function ChatPage() {
         });
       };
 
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true,
+        },
+      });
       if (sessionGeneration !== realtimeSessionGenerationRef.current) {
         stream.getTracks().forEach((track) => track.stop());
         peer.close();
@@ -836,6 +929,8 @@ export function ChatPage() {
             .trim();
           if (!transcript) return;
 
+          latestVoiceTranscriptRef.current = transcript;
+          scheduleVoiceIdleReminder(channel, sessionGeneration);
           setMessages((prev) => [...prev, { id: crypto.randomUUID(), role: 'user', text: transcript }]);
           if (channel.readyState === 'open') {
             channel.send(JSON.stringify({ type: 'response.create' }));
@@ -854,6 +949,11 @@ export function ChatPage() {
           item?: { type?: string; call_id?: string; name?: string };
         };
         if (realtimeEvent.type === 'input_audio_buffer.speech_started') {
+          if (voiceReminderSentRef.current && voiceDisconnectTimerRef.current !== null) {
+            window.clearTimeout(voiceDisconnectTimerRef.current);
+            voiceDisconnectTimerRef.current = null;
+          }
+          scheduleVoiceIdleReminder(channel, sessionGeneration);
           if (transcriptFlushTimeoutRef.current !== null) {
             window.clearTimeout(transcriptFlushTimeoutRef.current);
             transcriptFlushTimeoutRef.current = null;
@@ -869,6 +969,7 @@ export function ChatPage() {
           scheduleResponse();
         }
         if (realtimeEvent.type === 'response.output_audio_transcript.done' && realtimeEvent.transcript?.trim()) {
+          scheduleVoiceIdleReminder(channel, sessionGeneration);
           if (realtimeEvent.item_id) {
             if (handledAssistantItemsRef.current.has(realtimeEvent.item_id)) return;
             handledAssistantItemsRef.current.add(realtimeEvent.item_id);
@@ -963,8 +1064,10 @@ export function ChatPage() {
         return;
       }
       await peer.setRemoteDescription({ type: 'answer', sdp: answerSdp });
+      voiceReminderSentRef.current = false;
       setVoiceMode(true);
       setListening(true);
+      scheduleVoiceIdleReminder(channel, sessionGeneration);
     } catch (err) {
       if (sessionGeneration === realtimeSessionGenerationRef.current) {
         stopRealtimeVoice();
@@ -1161,7 +1264,9 @@ export function ChatPage() {
                         >
                           {plan.recommended && <span className={styles.recommendedTag}>Recommended</span>}
                           <h3 className={styles.planName}>{plan.name}</h3>
-                          <p className={styles.planPrice}>${plan.price.toFixed(2)}/mo</p>
+                          <p className={styles.planPrice}>
+                            {formatCurrency(plan.price, plan.currency ?? 'USD')}/mo
+                          </p>
                           <p className={styles.planSummary}>
                             {plan.dataGB === -1 ? 'Unlimited data' : `${plan.dataGB}GB data`} ·{' '}
                             {plan.callMinutes === -1 ? 'Unlimited calls' : `${plan.callMinutes} minutes`}
@@ -1173,6 +1278,29 @@ export function ChatPage() {
                           </ul>
                         </div>
                       ))}
+                      {messages.length === 1 && messages[0]?.id === 'welcome' && (
+                        <section className={styles.scenarioPanel} aria-label="Common telecom tasks">
+                          <p className={styles.scenarioHeading}>Common things I can help with</p>
+                          <div className={styles.scenarioButtons}>
+                            {[
+                              ['Troubleshoot my network', 'My mobile data is slow and keeps dropping.'],
+                              ['Understand a high bill', 'My latest bill is higher than expected.'],
+                              ['Find a better plan', 'Help me find a plan that fits my usage and saves money.'],
+                              ['Plan a roaming trip', 'I am going to Dubai for 10 days and need roaming.'],
+                            ].map(([label, prompt]) => (
+                              <button
+                                className={styles.scenarioButton}
+                                key={label}
+                                type="button"
+                                disabled={loading}
+                                onClick={() => void submitMessage(prompt)}
+                              >
+                                {label}
+                              </button>
+                            ))}
+                          </div>
+                        </section>
+                      )}
                     </div>
                   )}
 
@@ -1187,7 +1315,9 @@ export function ChatPage() {
                         >
                           {plan.recommended && <span className={styles.recommendedTag}>Recommended</span>}
                           <h3 className={styles.planName}>{plan.name}</h3>
-                          <p className={styles.planPrice}>${plan.price.toFixed(2)}/mo</p>
+                          <p className={styles.planPrice}>
+                            {formatCurrency(plan.price, plan.currency ?? 'USD')}/mo
+                          </p>
                           <p className={styles.planSummary}>
                             {plan.dataGB === -1 ? 'Unlimited data' : `${plan.dataGB}GB data`} ·{' '}
                             {plan.callMinutes === -1 ? 'Unlimited calls' : `${plan.callMinutes} minutes`}

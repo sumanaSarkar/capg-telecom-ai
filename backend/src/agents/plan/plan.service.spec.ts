@@ -19,6 +19,7 @@ describe('PlanService', () => {
       expect(plan).toHaveProperty('dataGB');
       expect(plan).toHaveProperty('callMinutes');
       expect(plan).toHaveProperty('price');
+      expect(plan).toHaveProperty('currency', 'USD');
       expect(plan).toHaveProperty('features');
       expect(plan).toHaveProperty('recommended');
     }
@@ -53,7 +54,15 @@ describe('PlanService', () => {
   it('getPlanById returns the matching plan', () => {
     const plan = service.getPlanById('plan-003');
     expect(plan?.name).toBe('Premium Unlimited');
-    expect(plan?.dataGB).toBe(-1);
+    expect(plan?.dataGB).toBe(100);
+    expect(plan?.currency).toBe('USD');
+  });
+
+  it('keeps the Standard 20GB plan allowance aligned with its catalog name', () => {
+    const plan = service.getPlanById('plan-002');
+
+    expect(plan?.dataGB).toBe(20);
+    expect(plan?.currency).toBe('USD');
   });
 
   it('getPlanById returns undefined for an unknown id', () => {

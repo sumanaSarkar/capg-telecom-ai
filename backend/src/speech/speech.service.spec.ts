@@ -72,4 +72,24 @@ describe('SpeechService', () => {
       }),
     );
   });
+
+  it('sets clear telecom, consent, side-talk, and audio-filter guidance for live voice', async () => {
+    const service = new SpeechService(new ProfileService(), new AnalyticsService());
+    const createMock = jest.fn().mockResolvedValue({ value: 'ephemeral-secret' });
+    Object.defineProperty(service, 'client', {
+      value: { realtime: { clientSecrets: { create: createMock } } },
+    });
+
+    await service.createRealtimeSession('cust-001');
+
+    const session = createMock.mock.calls[0][0].session;
+    expect(session.instructions).toMatch(/ignore unrelated side conversations/i);
+    expect(session.instructions).toMatch(/data allowance\/GB/i);
+    expect(session.instructions).toMatch(/Never prepare payment or activation because of a vague acknowledgement/i);
+    expect(session.audio.input.noise_reduction).toEqual({ type: 'near_field' });
+    expect(session.audio.input.turn_detection).toMatchObject({
+      type: 'semantic_vad',
+      eagerness: 'medium',
+    });
+  });
 });
